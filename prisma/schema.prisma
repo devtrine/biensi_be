@@ -1,0 +1,461 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// AUTH & USER MANAGEMENT 
+// ==========================================
+model Role {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(50)
+  permissions Json
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  users User[]
+
+  @@map("roles")
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique @db.VarChar(100)
+  name      String   @db.VarChar(100)
+  password  String
+  roleId    Int      @map("role_id")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  role Role @relation(fields: [roleId], references: [id])
+
+  @@map("users")
+}
+
+// ==========================================
+// MASTER ORGANIZATION (Dioptimasi ke Integer)
+// ==========================================
+model Division {
+  id        Int       @id @default(autoincrement())
+  code      String    @unique @db.VarChar(50)
+  name      String    @db.VarChar(100)
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime? @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  departments       Department[]
+  employees         Employee[]
+  monthlySnapshots  EmployeeMonthlySnapshot[]
+  movements         EmployeeMovement[]
+  labourCosts       LabourCost[]
+  recruitmentReqs   RecruitmentRequest[]
+  disciplinaryCases DisciplinaryCase[]
+
+  @@map("divisions")
+}
+
+model Department {
+  id         Int       @id @default(autoincrement())
+  divisionId Int       @map("division_id")
+  code       String    @unique @db.VarChar(50)
+  name       String    @db.VarChar(100)
+  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt  DateTime? @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  division          Division                  @relation(fields: [divisionId], references: [id])
+  employees         Employee[]
+  monthlySnapshots  EmployeeMonthlySnapshot[]
+  movements         EmployeeMovement[]
+  labourCosts       LabourCost[]
+  recruitmentReqs   RecruitmentRequest[]
+  disciplinaryCases DisciplinaryCase[]
+
+  @@map("departments")
+}
+
+model Position {
+  id            Int       @id @default(autoincrement())
+  code          String    @unique @db.VarChar(50)
+  name          String    @db.VarChar(100)
+  employeeLevel String?   @map("employee_level") @db.VarChar(50)
+  createdAt     DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime? @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  employees        Employee[]
+  monthlySnapshots EmployeeMonthlySnapshot[]
+  recruitmentReqs  RecruitmentRequest[]
+  kpiPositions     KpiPosition[]
+
+  @@map("positions")
+}
+
+// ==========================================
+// MASTER STORE (Dioptimasi ke Integer)
+// ==========================================
+model Store {
+  id        Int       @id @default(autoincrement())
+  storeCode String    @unique @map("store_code") @db.VarChar(50)
+  storeName String    @map("store_name") @db.VarChar(150)
+  storeType String?   @map("store_type") @db.VarChar(50)
+  region    String?   @db.VarChar(50)
+  area      String?   @db.VarChar(100)
+  isActive  Boolean?  @default(true) @map("is_active")
+  openedAt  DateTime? @map("opened_at") @db.Date
+  closedAt  DateTime? @map("closed_at") @db.Date
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime? @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  compliances       StoreCompliance[]
+  employees         Employee[]
+  monthlySnapshots  EmployeeMonthlySnapshot[]
+  movements         EmployeeMovement[]
+  labourCosts       LabourCost[]
+  salesMonthly      SalesMonthly[]
+  recruitmentReqs   RecruitmentRequest[]
+  disciplinaryCases DisciplinaryCase[]
+  fraudCases        FraudCase[]
+  irCases           IndustrialRelationCase[]
+
+  @@map("stores")
+}
+
+model StoreCompliance {
+  id           String   @id @default(uuid()) @db.Uuid
+  storeId      Int      @map("store_id")
+  documentType String   @map("document_type") @db.VarChar(50)
+  validFrom    DateTime @map("valid_from") @db.Date
+  validUntil   DateTime @map("valid_until") @db.Date
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@map("store_compliances")
+}
+
+// ==========================================
+// MASTER EMPLOYEE & MOVEMENTS (UUID)
+// ==========================================
+model Employee {
+  id                  String    @id @default(uuid()) @db.Uuid
+  employeeNo          String    @unique @map("employee_no") @db.VarChar(50)
+  fullName            String    @map("full_name") @db.VarChar(200)
+  gender              String?   @db.VarChar(20)
+  birthDate           DateTime? @map("birth_date") @db.Date
+  divisionId          Int?      @map("division_id")
+  departmentId        Int?      @map("department_id")
+  positionId          Int?      @map("position_id")
+  storeId             Int?      @map("store_id")
+  employmentType      String?   @map("employment_type") @db.VarChar(30)
+  joinDate            DateTime  @map("join_date") @db.Date
+  endDate             DateTime? @map("end_date") @db.Date
+  status              String?   @default("ACTIVE") @db.VarChar(30)
+  bpjsKetenagakerjaan Boolean?  @default(false) @map("bpjs_ketenagakerjaan")
+  bpjsKesehatan       Boolean?  @default(false) @map("bpjs_kesehatan")
+  createdAt           DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt           DateTime? @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  division   Division?   @relation(fields: [divisionId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  position   Position?   @relation(fields: [positionId], references: [id])
+  store      Store?      @relation(fields: [storeId], references: [id])
+
+  monthlySnapshots  EmployeeMonthlySnapshot[]
+  movements         EmployeeMovement[]
+  attendanceRecords AttendanceMonthly[]
+  recruitmentHires  RecruitmentHire[]
+  disciplinaryCases DisciplinaryCase[]
+  fraudCases        FraudCase[]
+  irCases           IndustrialRelationCase[]
+  kpiPositions      KpiPosition[]
+
+  @@index([storeId], map: "idx_employee_store")
+  @@index([departmentId], map: "idx_employee_department")
+  @@map("employees")
+}
+
+model EmployeeMovement {
+  id             String    @id @default(uuid()) @db.Uuid
+  employeeId     String    @map("employee_id") @db.Uuid
+  movementType   String    @map("movement_type") @db.VarChar(50)
+  movementDate   DateTime  @map("movement_date") @db.Date
+  reasonCategory String?   @map("reason_category") @db.VarChar(100)
+  reasonDetail   String?   @map("reason_detail") @db.Text
+  divisionId     Int?      @map("division_id")
+  departmentId   Int?      @map("department_id")
+  storeId        Int?      @map("store_id")
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  employee   Employee    @relation(fields: [employeeId], references: [id])
+  division   Division?   @relation(fields: [divisionId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  store      Store?      @relation(fields: [storeId], references: [id])
+
+  @@map("employee_movements")
+}
+
+// ==========================================
+// REPORTING & SNAPSHOTS (UUID)
+// ==========================================
+model ReportingPeriod {
+  id          String   @id @default(uuid()) @db.Uuid
+  year        Int      @db.SmallInt
+  month       Int      @db.SmallInt
+  periodStart DateTime @map("period_start") @db.Date
+  periodEnd   DateTime @map("period_end") @db.Date
+
+  employeeSnaps     EmployeeMonthlySnapshot[]
+  attendanceRecords AttendanceMonthly[]
+  labourCosts       LabourCost[]
+  salesMonthly      SalesMonthly[]
+  kpiPositions      KpiPosition[]
+
+  @@unique([year, month])
+  @@map("reporting_periods")
+}
+
+model EmployeeMonthlySnapshot {
+  id                  String    @id @default(uuid()) @db.Uuid
+  periodId            String    @map("period_id") @db.Uuid
+  employeeId          String    @map("employee_id") @db.Uuid
+  divisionId          Int?      @map("division_id")
+  departmentId        Int?      @map("department_id")
+  positionId          Int?      @map("position_id")
+  storeId             Int?      @map("store_id")
+  employeeLevel       String?   @map("employee_level") @db.VarChar(50)
+  employmentType      String?   @map("employment_type") @db.VarChar(30)
+  ageYears            Decimal?  @map("age_years") @db.Decimal(5, 2)
+  tenureYears         Decimal?  @map("tenure_years") @db.Decimal(5, 2)
+  employmentStatus    String?   @map("employment_status") @db.VarChar(30)
+  bpjsKetenagakerjaan Boolean?  @map("bpjs_ketenagakerjaan")
+  bpjsKesehatan       Boolean?  @map("bpjs_kesehatan")
+  labourCost          Decimal?  @map("labour_cost") @db.Decimal(18, 2)
+  createdAt           DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  period     ReportingPeriod @relation(fields: [periodId], references: [id])
+  employee   Employee        @relation(fields: [employeeId], references: [id])
+  division   Division?       @relation(fields: [divisionId], references: [id])
+  department Department?     @relation(fields: [departmentId], references: [id])
+  position   Position?       @relation(fields: [positionId], references: [id])
+  store      Store?          @relation(fields: [storeId], references: [id])
+
+  @@unique([periodId, employeeId])
+  @@index([periodId], map: "idx_snapshot_period")
+  @@map("employee_monthly_snapshots")
+}
+
+model AttendanceMonthly {
+  id              String    @id @default(uuid()) @db.Uuid
+  periodId        String    @map("period_id") @db.Uuid
+  employeeId      String    @map("employee_id") @db.Uuid
+  sickDays        Decimal?  @default(0) @map("sick_days") @db.Decimal(5, 2)
+  permissionDays  Decimal?  @default(0) @map("permission_days") @db.Decimal(5, 2)
+  annualLeaveDays Decimal?  @default(0) @map("annual_leave_days") @db.Decimal(5, 2)
+  absentDays      Decimal?  @default(0) @map("absent_days") @db.Decimal(5, 2)
+  workingDays     Decimal?  @default(0) @map("working_days") @db.Decimal(5, 2)
+  presentDays     Decimal?  @default(0) @map("present_days") @db.Decimal(5, 2)
+  createdAt       DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  period   ReportingPeriod @relation(fields: [periodId], references: [id])
+  employee Employee        @relation(fields: [employeeId], references: [id])
+
+  @@unique([periodId, employeeId])
+  @@index([periodId], map: "idx_attendance_period")
+  @@map("attendance_monthly")
+}
+
+model LabourCost {
+  id           String    @id @default(uuid()) @db.Uuid
+  periodId     String    @map("period_id") @db.Uuid
+  divisionId   Int?      @map("division_id")
+  departmentId Int?      @map("department_id")
+  storeId      Int?      @map("store_id")
+  budgetAmount Decimal?  @default(0) @map("budget_amount") @db.Decimal(18, 2)
+  actualAmount Decimal?  @default(0) @map("actual_amount") @db.Decimal(18, 2)
+  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  period     ReportingPeriod @relation(fields: [periodId], references: [id])
+  division   Division?       @relation(fields: [divisionId], references: [id])
+  department Department?     @relation(fields: [departmentId], references: [id])
+  store      Store?          @relation(fields: [storeId], references: [id])
+
+  @@index([periodId], map: "idx_labour_cost_period")
+  @@map("labour_costs")
+}
+
+model SalesMonthly {
+  id        String    @id @default(uuid()) @db.Uuid
+  periodId  String    @map("period_id") @db.Uuid
+  storeId   Int       @map("store_id")
+  salesQty  Decimal?  @default(0) @map("sales_qty") @db.Decimal(18, 2)
+  netSales  Decimal?  @default(0) @map("net_sales") @db.Decimal(18, 2)
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  period ReportingPeriod @relation(fields: [periodId], references: [id])
+  store  Store           @relation(fields: [storeId], references: [id])
+
+  @@unique([periodId, storeId])
+  @@map("sales_monthly")
+}
+
+// ==========================================
+// RECRUITMENT & KPI (UUID)
+// ==========================================
+model RecruitmentRequest {
+  id                 String    @id @default(uuid()) @db.Uuid
+  requestCode        String    @unique @map("request_code") @db.VarChar(50)
+  requestedAt        DateTime? @map("requested_at") @db.Date
+  divisionId         Int?      @map("division_id")
+  departmentId       Int?      @map("department_id")
+  positionId         Int?      @map("position_id")
+  storeId            Int?      @map("store_id")
+  requestedHeadcount Int?      @default(0) @map("requested_headcount")
+  filledHeadcount    Int?      @default(0) @map("filled_headcount")
+  status             String?   @db.VarChar(30)
+  createdAt          DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  division   Division?         @relation(fields: [divisionId], references: [id])
+  department Department?       @relation(fields: [departmentId], references: [id])
+  position   Position?         @relation(fields: [positionId], references: [id])
+  store      Store?            @relation(fields: [storeId], references: [id])
+  hires      RecruitmentHire[]
+
+  @@map("recruitment_requests")
+}
+
+model RecruitmentHire {
+  id                   String    @id @default(uuid()) @db.Uuid
+  recruitmentRequestId String    @map("recruitment_request_id") @db.Uuid
+  employeeId           String?   @map("employee_id") @db.Uuid
+  appliedAt            DateTime? @map("applied_at") @db.Date
+  hiredAt              DateTime? @map("hired_at") @db.Date
+  recruitmentCost      Decimal?  @map("recruitment_cost") @db.Decimal(18, 2)
+  createdAt            DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  request  RecruitmentRequest @relation(fields: [recruitmentRequestId], references: [id])
+  employee Employee?          @relation(fields: [employeeId], references: [id])
+
+  @@map("recruitment_hires")
+}
+
+model KpiPosition {
+  id             String    @id @default(uuid()) @db.Uuid
+  periodId       String    @map("period_id") @db.Uuid
+  employeeId     String    @map("employee_id") @db.Uuid
+  positionId     Int?      @map("position_id")
+  kpiStatus      String?   @map("kpi_status") @db.VarChar(50)
+  completionDate DateTime? @map("completion_date") @db.Date
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  period   ReportingPeriod @relation(fields: [periodId], references: [id])
+  employee Employee        @relation(fields: [employeeId], references: [id])
+  position Position?       @relation(fields: [positionId], references: [id])
+
+  @@map("kpi_positions")
+}
+
+// ==========================================
+// RISK, FRAUD & IR (UUID)
+// ==========================================
+model DisciplinaryCase {
+  id             String    @id @default(uuid()) @db.Uuid
+  employeeId     String    @map("employee_id") @db.Uuid
+  referenceNo    String?   @map("reference_no") @db.VarChar(100)
+  disciplineType String?   @map("discipline_type") @db.VarChar(50)
+  category       String?   @db.VarChar(100)
+  startDate      DateTime? @map("start_date") @db.Date
+  endDate        DateTime? @map("end_date") @db.Date
+  remark         String?   @db.Text
+  divisionId     Int?      @map("division_id")
+  departmentId   Int?      @map("department_id")
+  storeId        Int?      @map("store_id")
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  employee   Employee    @relation(fields: [employeeId], references: [id])
+  division   Division?   @relation(fields: [divisionId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  store      Store?      @relation(fields: [storeId], references: [id])
+  fraudCases FraudCase[]
+
+  @@index([employeeId], map: "idx_discipline_employee")
+  @@map("disciplinary_cases")
+}
+
+model FraudCase {
+  id             String    @id @default(uuid()) @db.Uuid
+  employeeId     String?   @map("employee_id") @db.Uuid
+  storeId        Int?      @map("store_id")
+  caseDate       DateTime? @map("case_date") @db.Date
+  auditDate      DateTime? @map("audit_date") @db.Date
+  disciplineId   String?   @map("discipline_id") @db.Uuid
+  fraudCategory  String?   @map("fraud_category") @db.VarChar(100)
+  remark         String?   @db.Text
+  discrepancyQty Decimal?  @map("discrepancy_qty") @db.Decimal(18, 2)
+  bakbAmount     Decimal?  @map("bakb_amount") @db.Decimal(18, 2)
+  salesTarget    Decimal?  @map("sales_target") @db.Decimal(18, 2)
+  salesActual    Decimal?  @map("sales_actual") @db.Decimal(18, 2)
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  employee   Employee?         @relation(fields: [employeeId], references: [id])
+  store      Store?            @relation(fields: [storeId], references: [id])
+  discipline DisciplinaryCase? @relation(fields: [disciplineId], references: [id])
+
+  @@map("fraud_cases")
+}
+
+model IndustrialRelationCase {
+  id           String    @id @default(uuid()) @db.Uuid
+  employeeId   String?   @map("employee_id") @db.Uuid
+  storeId      Int?      @map("store_id")
+  caseCategory String?   @map("case_category") @db.VarChar(100)
+  status       String?   @db.VarChar(50)
+  startDate    DateTime? @map("start_date") @db.Date
+  endDate      DateTime? @map("end_date") @db.Date
+  description  String?   @db.Text
+  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  employee Employee? @relation(fields: [employeeId], references: [id])
+  store    Store?    @relation(fields: [storeId], references: [id])
+
+  @@index([status], map: "idx_ir_case_status")
+  @@map("industrial_relation_cases")
+}
+
+// ==========================================
+// IMPORT PIPELINE (Staging - Tetap Pakai UUID/BigInt)
+// ==========================================
+model ImportBatch {
+  id          String    @id @default(uuid()) @db.Uuid
+  fileName    String    @map("file_name") @db.VarChar(255)
+  sourceType  String?   @map("source_type") @db.VarChar(50)
+  status      String?   @db.VarChar(30)
+  totalRows   Int?      @default(0) @map("total_rows")
+  successRows Int?      @default(0) @map("successRows")
+  failedRows  Int?      @default(0) @map("failed_rows")
+  startedAt   DateTime? @map("started_at") @db.Timestamp(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamp(6)
+  createdAt   DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  stagingData StagingEmployeeImport[]
+
+  @@map("import_batches")
+}
+
+model StagingEmployeeImport {
+  id               BigInt    @id @default(autoincrement())
+  importBatchId    String?   @map("import_batch_id") @db.Uuid
+  employeeNo       String?   @map("employee_no") @db.Text
+  fullName         String?   @map("full_name") @db.Text
+  positionName     String?   @map("position_name") @db.Text
+  storeName        String?   @map("store_name") @db.Text
+  joinDate         String?   @map("join_date") @db.Text
+  rowNumber        Int?      @map("row_number")
+  validationStatus String?   @map("validation_status") @db.VarChar(30)
+  validationError  String?   @map("validation_error") @db.Text
+  createdAt        DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  batch ImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  @@map("staging_employee_import")
+}
