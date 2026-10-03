@@ -1,0 +1,21 @@
+info:
+  name: SoftDelete
+  type: http
+  seq: 5
+
+http:
+  method: PATCH
+  url: http://localhost:5000/api/v1/stores/{{id}}/deactivate
+  auth: inherit
+
+runtime:
+  variables:
+    - name: id
+      value: "4"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

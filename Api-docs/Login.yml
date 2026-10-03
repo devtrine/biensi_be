@@ -15,6 +15,17 @@ http:
       }
   auth: inherit
 
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        const responseData = res.getBody();
+        if (responseData && responseData.data && responseData.data.token) {
+          // Ganti setVar menjadi setEnvVar
+          bru.setEnvVar("jwt_token", responseData.data.token);
+          console.log("Token berhasil disuntikkan ke Environment!");
+        }
+
 settings:
   encodeUrl: true
   timeout: 0

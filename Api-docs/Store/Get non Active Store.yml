@@ -1,0 +1,16 @@
+info:
+  name: Get non Active Store
+  type: http
+  seq: 6
+
+http:
+  method: GET
+  url: http://localhost:5000/api/v1/stores/inactive
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

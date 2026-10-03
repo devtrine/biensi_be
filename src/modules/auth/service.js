@@ -21,7 +21,7 @@ const login = async (email, password) => {
   };
   
   // Pastikan Anda sudah menambahkan JWT_SECRET di file .env
-  const token = jwt.sign(payload, process.env.JWT_SECRET || 'secret_key_default', { expiresIn: '1d' });
+  const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1d' });
 
   return {
     user: {
