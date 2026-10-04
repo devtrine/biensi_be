@@ -1,0 +1,21 @@
+info:
+  name: Delete Employee
+  type: http
+  seq: 5
+
+http:
+  method: DELETE
+  url: http://localhost:5000/api/v1/employees/{{id}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: id
+      value: b459638e-9689-43ef-b046-05382682b4d6
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

@@ -1,0 +1,21 @@
+info:
+  name: Get By Id
+  type: http
+  seq: 3
+
+http:
+  method: GET
+  url: http://localhost:5000/api/v1/employees/{{id}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: id
+      value: 35b16e67-261c-4a8d-9172-41502fbf6486
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
