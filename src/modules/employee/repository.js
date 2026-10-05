@@ -94,8 +94,93 @@ const updateEmployee = async (id, data) => {
 const deleteEmployee = async (id) => {
   return await prisma.employee.delete({ where: { id } });
 };
+const processBulkImport = async (rawData) => {
+  const results = { sukses: 0, gagal: 0, errorList: [] };
+
+  for (const row of rawData) {
+    try {
+      if (!row.employeeNo) continue;
+
+      // 1. Resolve Master Data (find or create) -> Tambahkan let storeId = null
+      let divisionId = null, departmentId = null, unitId = null, positionId = null, storeId = null;
+
+      if (row.divisionName) {
+        let div = await prisma.division.findFirst({ where: { name: { equals: row.divisionName, mode: 'insensitive' } } });
+        if (!div) div = await prisma.division.create({ data: { name: row.divisionName, code: `DIV-${Date.now()}` } });
+        divisionId = div.id;
+      }
+
+      if (row.departmentName && divisionId) {
+        let dept = await prisma.department.findFirst({ where: { name: { equals: row.departmentName, mode: 'insensitive' } } });
+        if (!dept) dept = await prisma.department.create({ data: { name: row.departmentName, code: `DEPT-${Date.now()}`, divisionId } });
+        departmentId = dept.id;
+      }
+
+      if (row.unitName && departmentId) {
+        let unit = await prisma.unit.findFirst({ where: { name: { equals: row.unitName, mode: 'insensitive' } } });
+        if (!unit) unit = await prisma.unit.create({ data: { name: row.unitName, code: `UNT-${Date.now()}`, departmentId } });
+        unitId = unit.id;
+      }
+
+      if (row.positionName) {
+        let pos = await prisma.position.findFirst({ where: { name: { equals: row.positionName, mode: 'insensitive' } } });
+        if (!pos) pos = await prisma.position.create({ data: { name: row.positionName, code: `POS-${Date.now()}`, employeeLevel: row.levelName || 'STAFF' } });
+        positionId = pos.id;
+      }
+
+      // --- TAMBAHAN BLOK STORE YANG BENAR ---
+      if (row.storeName) {
+        let store = await prisma.store.findFirst({ where: { storeName: { equals: row.storeName, mode: 'insensitive' } } });
+        if (!store) store = await prisma.store.create({ data: { storeName: row.storeName, storeCode: `STR-${Date.now()}` } });
+        storeId = store.id;
+      }
+      // --------------------------------------
+
+      // 2. Siapkan data karyawan untuk Prisma
+      const employeeData = {
+        employeeNo: row.employeeNo,
+        fullName: row.fullName,
+        gender: row.gender,
+        birthDate: row.birthDate,
+        educationLevel: row.educationLevel,
+        employmentType: row.employmentType,
+        joinDate: row.joinDate,
+        endDate: row.endDate,
+        bpjsKetenagakerjaan: row.bpjsKetenagakerjaan,
+        bpjsKesehatan: row.bpjsKesehatan,
+        
+        // Relasi (menggunakan sintaks connect yang aman)
+        ...(divisionId ? { division: { connect: { id: divisionId } } } : {}),
+        ...(departmentId ? { department: { connect: { id: departmentId } } } : {}),
+        ...(unitId ? { unit: { connect: { id: unitId } } } : {}),
+        ...(positionId ? { position: { connect: { id: positionId } } } : {}),
+        
+        // --- SUNTIKKAN STORE ID KE SINI ---
+        ...(storeId ? { store: { connect: { id: storeId } } } : {})
+      };
+
+      // 3. Eksekusi Upsert
+      await prisma.employee.upsert({
+        where: { employeeNo: employeeData.employeeNo },
+        update: employeeData,
+        create: employeeData
+      });
+
+      results.sukses++;
+    } catch (error) {
+      results.gagal++;
+      results.errorList.push(`Error NIK ${row.employeeNo}: ${error.message}`);
+    }
+  }
+  return results;
+};
 
 module.exports = {
-  findAllEmployees, findEmployeeById, findEmployeeByNo,
-  createEmployee, updateEmployee, deleteEmployee
+  findAllEmployees,
+  findEmployeeById,
+  findEmployeeByNo,
+  createEmployee,
+  updateEmployee,
+  deleteEmployee,
+  processBulkImport
 };

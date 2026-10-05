@@ -6,6 +6,14 @@ info:
 http:
   method: POST
   url: http://localhost:5000/api/v1/departments
+  body:
+    type: json
+    data: |-
+      {
+        "code" : "DEPT-005",
+        "name" : "Sales Online",
+        "divisionId" : 6
+      }
   auth: inherit
 
 settings:

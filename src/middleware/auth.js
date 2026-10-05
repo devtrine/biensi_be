@@ -11,7 +11,7 @@ const authenticate = (req, res, next) => {
       });
     }
     
-    console.log("🕵️ DETEKTIF HEADER:", authHeader);
+    // console.log("CEK HEADER:", authHeader);
     const token = authHeader.split(' ')[1];
 
     // Verifikasi token menggunakan JWT_SECRET dari .env

@@ -6,6 +6,16 @@ info:
 http:
   method: POST
   url: http://localhost:5000/api/v1/stores
+  body:
+    type: json
+    data: |-
+      {
+        "storeCode": "DPK-001",
+        "storeName": "Store Pd Rajeg",
+        "storeType": "mall",
+        "region": "Depok",
+        "area": "Pusat"
+      }
   auth: inherit
 
 settings:

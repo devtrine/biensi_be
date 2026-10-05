@@ -6,6 +6,12 @@ info:
 http:
   method: PUT
   url: http://localhost:5000/api/v1/units/{{id}}
+  body:
+    type: json
+    data: |-
+      {
+        "code" : "UNIT-CPO"
+      }
   auth: inherit
 
 runtime:

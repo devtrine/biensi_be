@@ -6,6 +6,14 @@ info:
 http:
   method: POST
   url: http://localhost:5000/api/v1/units
+  body:
+    type: json
+    data: |-
+      {
+        "code": "UNT-005",
+        "name": "Creative & Production Online",
+        "departmentId": 7
+      }
   auth: inherit
 
 settings:

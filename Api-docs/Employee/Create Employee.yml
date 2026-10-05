@@ -5,7 +5,27 @@ info:
 
 http:
   method: POST
-  url: http;//localhost:5000/api/v1/employees
+  url: http://localhost:5000/api/v1/employees
+  body:
+    type: json
+    data: |-
+      {
+        "employeeNo": "A15161720",
+        "fullName": "SEBASTIAN",
+        "gender": "LAKI-LAKI",
+        "birthDate": "1992-04-07",
+        "educationLevel": "S2",
+        "divisionId": 6,
+        "departmentId": 7,
+        "unitId": 5,
+        "positionId": 4,
+        "storeId": 6,
+        "employmentType": "FREELANCE",
+        "joinDate": "2023-05-16",
+        "endDate": "2026-09-30",
+        "bpjsKetenagakerjaan": true,
+        "bpjsKesehatan": true
+      }
   auth: inherit
 
 settings:

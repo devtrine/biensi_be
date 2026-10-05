@@ -6,6 +6,12 @@ info:
 http:
   method: PUT
   url: http://localhost:5000/api/v1/stores/{{id}}
+  body:
+    type: json
+    data: |-
+      {
+        "storeType": "Kiosk"
+      }
   auth: inherit
 
 runtime:

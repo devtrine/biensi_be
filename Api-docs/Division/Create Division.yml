@@ -6,6 +6,13 @@ info:
 http:
   method: POST
   url: http://localhost:5000/api/v1/divisions
+  body:
+    type: json
+    data: |-
+      {
+        "code": "DIV-002", 
+        "name": "Comercial Bussiness"
+      }
   auth: inherit
 
 settings:

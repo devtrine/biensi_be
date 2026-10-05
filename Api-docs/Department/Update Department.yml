@@ -6,6 +6,12 @@ info:
 http:
   method: PUT
   url: http://localhost:5000/api/v1/departments/{{id}}
+  body:
+    type: json
+    data: |-
+      {
+        "name" : "Database Enginner"
+      }
   auth: inherit
 
 runtime:

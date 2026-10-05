@@ -6,6 +6,14 @@ info:
 http:
   method: POST
   url: http://localhost:5000/api/v1/positions
+  body:
+    type: json
+    data: |-
+      {
+        "code" : "POS-005",
+        "name" : "Follow Up",
+        "employeeLevel" : "staff"
+      }
   auth: inherit
 
 settings:

@@ -6,6 +6,12 @@ info:
 http:
   method: PUT
   url: http://localhost:5000/api/v1/employees/{{id}}
+  body:
+    type: json
+    data: |-
+      {
+        "fullName" : "SEBASTIAN VETTEL"
+      }
   auth: inherit
 
 runtime:

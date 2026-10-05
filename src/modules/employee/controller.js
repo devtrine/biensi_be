@@ -1,4 +1,6 @@
 const service = require('./service');
+const importService = require('./import');
+const fs = require('fs');
 
 const getEmployees = async (req, res) => {
   try { res.status(200).json({ success: true, data: await service.getAllEmployees(req.query.search) }); } 
@@ -30,4 +32,41 @@ const deleteEmployee = async (req, res) => {
   }
 };
 
-module.exports = { getEmployees, getEmployeeById, createEmployee, updateEmployee, deleteEmployee };
+const importEmployees = async (req, res) => {
+  try {
+    // 1. CCTV kita yang terbukti berhasil menangkap file
+    console.log("=== DEBUG MULTER ===");
+    console.log("Isi req.file:", req.file);
+
+
+    // 2. Validasi
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "File Excel tidak ditemukan" });
+    }
+
+    // 3. DI SINI TEMPATNYA! Mesin menyedot data Excel yang ditangkap Multer
+    const result = await importService.processExcelImport(req.file.path);
+
+    // 4. Kirim laporan ke Bruno!
+    res.status(200).json({
+      success: true,
+      message: `Import selesai. Sukses: ${result.sukses}, Gagal: ${result.gagal}`,
+      errors: result.errorList
+    });
+
+  } catch (error) {
+    // Jika di tengah jalan Prisma error, file sampah tetap harus dihapus
+    if (req.file) fs.unlinkSync(req.file.path);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+module.exports = {
+    getEmployees,
+    getEmployeeById,
+    createEmployee,
+    updateEmployee,
+    deleteEmployee,
+    importEmployees
+};
