@@ -5,11 +5,7 @@ info:
 
 http:
   method: GET
-  url: http://localhost:5000/api/v1/divisions?search=Tech
-  params:
-    - name: search
-      value: Tech
-      type: query
+  url: http://localhost:5000/api/v1/divisions
   auth: inherit
 
 settings:

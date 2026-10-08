@@ -32,12 +32,12 @@ const findEmployeeByNo = async (employeeNo) => {
 
 const createEmployee = async (data) => {
   // 1. Ekstrak semua relasi ID keluar dari objek data, sisanya masuk ke 'basicData'
-  const { 
-    divisionId, 
-    departmentId, 
-    unitId, 
-    positionId, 
-    storeId, 
+  const {
+    divisionId,
+    departmentId,
+    unitId,
+    positionId,
+    storeId,
     ...basicData // Berisi employeeNo, fullName, birthDate, dll (tanpa Id relasi)
   } = data;
 
@@ -45,7 +45,7 @@ const createEmployee = async (data) => {
   return await prisma.employee.create({
     data: {
       ...basicData, // Data bersih dimasukkan
-      
+
       // Jika ID ada nilainya, kita buatkan objek connect-nya
       ...(divisionId ? { division: { connect: { id: divisionId } } } : {}),
       ...(departmentId ? { department: { connect: { id: departmentId } } } : {}),
@@ -58,34 +58,34 @@ const createEmployee = async (data) => {
 
 const updateEmployee = async (id, data) => {
   // Sama, ekstrak dulu sebelum update
-  const { 
-    divisionId, 
-    departmentId, 
-    unitId, 
-    positionId, 
-    storeId, 
-    ...basicData 
+  const {
+    divisionId,
+    departmentId,
+    unitId,
+    positionId,
+    storeId,
+    ...basicData
   } = data;
 
   return await prisma.employee.update({
     where: { id },
     data: {
       ...basicData,
-      
-      ...(divisionId !== undefined && { 
-        division: divisionId ? { connect: { id: divisionId } } : { disconnect: true } 
+
+      ...(divisionId !== undefined && {
+        division: divisionId ? { connect: { id: divisionId } } : { disconnect: true }
       }),
-      ...(departmentId !== undefined && { 
-        department: departmentId ? { connect: { id: departmentId } } : { disconnect: true } 
+      ...(departmentId !== undefined && {
+        department: departmentId ? { connect: { id: departmentId } } : { disconnect: true }
       }),
-      ...(unitId !== undefined && { 
-        unit: unitId ? { connect: { id: unitId } } : { disconnect: true } 
+      ...(unitId !== undefined && {
+        unit: unitId ? { connect: { id: unitId } } : { disconnect: true }
       }),
-      ...(positionId !== undefined && { 
-        position: positionId ? { connect: { id: positionId } } : { disconnect: true } 
+      ...(positionId !== undefined && {
+        position: positionId ? { connect: { id: positionId } } : { disconnect: true }
       }),
-      ...(storeId !== undefined && { 
-        store: storeId ? { connect: { id: storeId } } : { disconnect: true } 
+      ...(storeId !== undefined && {
+        store: storeId ? { connect: { id: storeId } } : { disconnect: true }
       })
     }
   });
@@ -148,13 +148,28 @@ const processBulkImport = async (rawData) => {
         endDate: row.endDate,
         bpjsKetenagakerjaan: row.bpjsKetenagakerjaan,
         bpjsKesehatan: row.bpjsKesehatan,
-        
+        baseSalary: (() => {
+          let rawValue = row.baseSalary;
+
+          if (rawValue === undefined || rawValue === null || rawValue === '') return null;
+
+          if (typeof rawValue === 'number') return rawValue;
+
+          if (typeof rawValue === 'string') {
+            const cleanDigits = rawValue.replace(/\D/g, ''); // Hapus koma, spasi, huruf
+            const finalNumber = parseInt(cleanDigits, 10);
+            return isNaN(finalNumber) ? null : finalNumber;
+          }
+
+          return null;
+        })(),
+
         // Relasi (menggunakan sintaks connect yang aman)
         ...(divisionId ? { division: { connect: { id: divisionId } } } : {}),
         ...(departmentId ? { department: { connect: { id: departmentId } } } : {}),
         ...(unitId ? { unit: { connect: { id: unitId } } } : {}),
         ...(positionId ? { position: { connect: { id: positionId } } } : {}),
-        
+
         // --- SUNTIKKAN STORE ID KE SINI ---
         ...(storeId ? { store: { connect: { id: storeId } } } : {})
       };

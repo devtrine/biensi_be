@@ -49,7 +49,6 @@ model Division {
   employees         Employee[]
   monthlySnapshots  EmployeeMonthlySnapshot[]
   movements         EmployeeMovement[]
-  labourCosts       LabourCost[]
   recruitmentReqs   RecruitmentRequest[]
   disciplinaryCases DisciplinaryCase[]
 
@@ -69,7 +68,6 @@ model Department {
   employees         Employee[]
   monthlySnapshots  EmployeeMonthlySnapshot[]
   movements         EmployeeMovement[]
-  labourCosts       LabourCost[]
   recruitmentReqs   RecruitmentRequest[]
   disciplinaryCases DisciplinaryCase[]
 
@@ -126,7 +124,6 @@ model Store {
   employees         Employee[]
   monthlySnapshots  EmployeeMonthlySnapshot[]
   movements         EmployeeMovement[]
-  labourCosts       LabourCost[]
   salesMonthly      SalesMonthly[]
   recruitmentReqs   RecruitmentRequest[]
   disciplinaryCases DisciplinaryCase[]
@@ -170,6 +167,10 @@ model Employee {
   status              String?   @default("ACTIVE") @db.VarChar(30)
   bpjsKetenagakerjaan Boolean?  @default(false) @map("bpjs_ketenagakerjaan")
   bpjsKesehatan       Boolean?  @default(false) @map("bpjs_kesehatan")
+  
+  // ---> PERUBAHAN: TAMBAHAN BASE SALARY <---
+  baseSalary          Decimal?  @map("base_salary") @db.Decimal(18, 2)
+  
   createdAt           DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt           DateTime? @updatedAt @map("updated_at") @db.Timestamp(6)
 
@@ -181,7 +182,9 @@ model Employee {
 
   monthlySnapshots  EmployeeMonthlySnapshot[]
   movements         EmployeeMovement[]
-  attendanceRecords AttendanceMonthly[]
+  
+  // ---> PERUBAHAN: HAPUS relasi attendanceRecords lama <---
+  
   recruitmentHires  RecruitmentHire[]
   disciplinaryCases DisciplinaryCase[]
   fraudCases        FraudCase[]
@@ -224,11 +227,12 @@ model ReportingPeriod {
   periodStart DateTime @map("period_start") @db.Date
   periodEnd   DateTime @map("period_end") @db.Date
 
-  employeeSnaps     EmployeeMonthlySnapshot[]
-  attendanceRecords AttendanceMonthly[]
-  labourCosts       LabourCost[]
-  salesMonthly      SalesMonthly[]
-  kpiPositions      KpiPosition[]
+  employeeSnaps   EmployeeMonthlySnapshot[]
+  salesMonthly    SalesMonthly[]
+  kpiPositions    KpiPosition[]
+  
+  // ---> PERUBAHAN: HAPUS relasi labourCosts & attendanceRecords lama, TAMBAH agregat <---
+  attendanceAggregate AttendanceAggregateMonthly?
 
   @@unique([year, month])
   @@map("reporting_periods")
@@ -249,7 +253,11 @@ model EmployeeMonthlySnapshot {
   employmentStatus    String?   @map("employment_status") @db.VarChar(30)
   bpjsKetenagakerjaan Boolean?  @map("bpjs_ketenagakerjaan")
   bpjsKesehatan       Boolean?  @map("bpjs_kesehatan")
-  labourCost          Decimal?  @map("labour_cost") @db.Decimal(18, 2)
+  
+  // ---> PERUBAHAN: SPLIT LABOUR COST <---
+  budgetLabourCost    Decimal?  @map("budget_labour_cost") @db.Decimal(18, 2)
+  actualLabourCost    Decimal?  @map("actual_labour_cost") @db.Decimal(18, 2)
+  
   createdAt           DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
 
   period     ReportingPeriod @relation(fields: [periodId], references: [id])
@@ -264,43 +272,21 @@ model EmployeeMonthlySnapshot {
   @@map("employee_monthly_snapshots")
 }
 
-model AttendanceMonthly {
-  id              String    @id @default(uuid()) @db.Uuid
-  periodId        String    @map("period_id") @db.Uuid
-  employeeId      String    @map("employee_id") @db.Uuid
-  sickDays        Decimal?  @default(0) @map("sick_days") @db.Decimal(5, 2)
-  permissionDays  Decimal?  @default(0) @map("permission_days") @db.Decimal(5, 2)
-  annualLeaveDays Decimal?  @default(0) @map("annual_leave_days") @db.Decimal(5, 2)
-  absentDays      Decimal?  @default(0) @map("absent_days") @db.Decimal(5, 2)
-  workingDays     Decimal?  @default(0) @map("working_days") @db.Decimal(5, 2)
-  presentDays     Decimal?  @default(0) @map("present_days") @db.Decimal(5, 2)
-  createdAt       DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+// ---> PERUBAHAN: TAMBAH MODEL BARU INI <---
+model AttendanceAggregateMonthly {
+  id               String   @id @default(uuid()) @db.Uuid
+  periodId         String   @unique @map("period_id") @db.Uuid
+  totalEmployees   Int      @map("total_employees")
+  sickCount        Int      @default(0) @map("sick_count")
+  permissionCount  Int      @default(0) @map("permission_count")
+  annualLeaveCount Int      @default(0) @map("annual_leave_count")
+  absentCount      Int      @default(0) @map("absent_count")
+  workingDays      Int?     @map("working_days")
+  attendanceRate   Decimal? @map("attendance_rate") @db.Decimal(5, 2)
+  createdAt        DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
 
-  period   ReportingPeriod @relation(fields: [periodId], references: [id])
-  employee Employee        @relation(fields: [employeeId], references: [id])
-
-  @@unique([periodId, employeeId])
-  @@index([periodId], map: "idx_attendance_period")
-  @@map("attendance_monthly")
-}
-
-model LabourCost {
-  id           String    @id @default(uuid()) @db.Uuid
-  periodId     String    @map("period_id") @db.Uuid
-  divisionId   Int?      @map("division_id")
-  departmentId Int?      @map("department_id")
-  storeId      Int?      @map("store_id")
-  budgetAmount Decimal?  @default(0) @map("budget_amount") @db.Decimal(18, 2)
-  actualAmount Decimal?  @default(0) @map("actual_amount") @db.Decimal(18, 2)
-  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
-
-  period     ReportingPeriod @relation(fields: [periodId], references: [id])
-  division   Division?       @relation(fields: [divisionId], references: [id])
-  department Department?     @relation(fields: [departmentId], references: [id])
-  store      Store?          @relation(fields: [storeId], references: [id])
-
-  @@index([periodId], map: "idx_labour_cost_period")
-  @@map("labour_costs")
+  period ReportingPeriod @relation(fields: [periodId], references: [id])
+  @@map("attendance_aggregate_monthly")
 }
 
 model SalesMonthly {

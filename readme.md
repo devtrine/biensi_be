@@ -30,8 +30,8 @@ npx prisma migrate dev --name_migration
 npx prisma db seed
 
 5. Menjalankan Server
-Nyalakan server untuk mode development (menggunakan Nodemon):
+Nyalakan server untuk mode development :
 
 Bash
-node src/server.js
+npm start
 Jika indikator di terminal menunjukkan server berhasil menyala, sistem sudah siap menerima request di http://localhost:5000.

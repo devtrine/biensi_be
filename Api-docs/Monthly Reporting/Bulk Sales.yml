@@ -1,0 +1,24 @@
+info:
+  name: Bulk Sales
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: http://localhost:5000/api/v1/reporting-monthly/bulk-sales
+  body:
+    type: multipart-form
+    data:
+      - name: file
+        type: file
+        value:
+          - C:\yt-dlp\sales.xlsx
+        contentType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

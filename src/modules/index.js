@@ -8,6 +8,7 @@ const departmentRoutes = require('./department/routes');
 const positionRoutes = require('./position/routes');
 const unitRoutes = require('./unit/routes');
 const employeeRoutes = require('./employee/routes');
+const monthlyReportingRoutes = require('./monthly-reporting/routes');
 
 router.use('/auth', authRoutes);
 router.use('/stores', storeRoutes);
@@ -16,5 +17,6 @@ router.use('/departments', departmentRoutes);
 router.use('/positions', positionRoutes);
 router.use('/units', unitRoutes);
 router.use('/employees', employeeRoutes);
+router.use('/reporting-monthly', monthlyReportingRoutes);
 
 module.exports = router;

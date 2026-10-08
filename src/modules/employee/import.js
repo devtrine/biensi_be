@@ -49,6 +49,7 @@ const formattedData = rawExcelData.map(row => {
       employmentType: getValue(row, 'statuskaryawan') || 'KONTRAK',
       joinDate: excelDateToJSDate(getValue(row, 'tglmskkrj')) || new Date(),
       endDate: excelDateToJSDate(getValue(row, 'tglhabiskontrak')),
+      baseSalary: getValue(row, 'labourcostperemployee') || getValue(row, 'basesalary'),
       
       // Boolean cerdas
       bpjsKetenagakerjaan: isBpjsKetenagakerjaanValid,

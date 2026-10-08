@@ -1,0 +1,24 @@
+info:
+  name: Bulk attendance
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: http://localhost:5000/api/v1/reporting-monthly/bulk-attendance
+  body:
+    type: multipart-form
+    data:
+      - name: file
+        type: file
+        value:
+          - C:\yt-dlp\Kehadiran 2024.xlsx
+        contentType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

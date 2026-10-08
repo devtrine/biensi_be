@@ -18,7 +18,9 @@ const formatEmployeePayload = (data) => {
   // Parsing Booleans
   if (data.bpjsKetenagakerjaan !== undefined) payload.bpjsKetenagakerjaan = Boolean(data.bpjsKetenagakerjaan);
   if (data.bpjsKesehatan !== undefined) payload.bpjsKesehatan = Boolean(data.bpjsKesehatan);
-
+  if (data.baseSalary !== undefined) {
+    payload.baseSalary = data.baseSalary ? parseFloat(data.baseSalary) : null;
+  }
   return payload;
 };
 
