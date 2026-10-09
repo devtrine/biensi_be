@@ -1,0 +1,24 @@
+info:
+  name: "Bulk "
+  type: http
+  seq: 5
+
+http:
+  method: POST
+  url: http://localhost:5000/api/v1/movement/bulk-upload
+  body:
+    type: multipart-form
+    data:
+      - name: file
+        type: file
+        value:
+          - C:\yt-dlp\TurnOverToko.xlsx
+        contentType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

@@ -1,0 +1,21 @@
+info:
+  name: Delete
+  type: http
+  seq: 4
+
+http:
+  method: DELETE
+  url: http://localhost:5000/api/v1/movement/{{id}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: id
+      value: ec049db3-cec3-40d9-ac4b-d2a36e83ef3f
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

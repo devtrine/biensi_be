@@ -114,6 +114,7 @@ model Store {
   storeType String?   @map("store_type") @db.VarChar(50)
   region    String?   @db.VarChar(50)
   area      String?   @db.VarChar(100)
+  asstHead  String?   @map("asst_head") @db.VarChar(150)
   isActive  Boolean?  @default(true) @map("is_active")
   openedAt  DateTime? @map("opened_at") @db.Date
   closedAt  DateTime? @map("closed_at") @db.Date
@@ -198,16 +199,28 @@ model Employee {
 }
 
 model EmployeeMovement {
-  id             String    @id @default(uuid()) @db.Uuid
-  employeeId     String    @map("employee_id") @db.Uuid
-  movementType   String    @map("movement_type") @db.VarChar(50)
-  movementDate   DateTime  @map("movement_date") @db.Date
-  reasonCategory String?   @map("reason_category") @db.VarChar(100)
-  reasonDetail   String?   @map("reason_detail") @db.Text
-  divisionId     Int?      @map("division_id")
-  departmentId   Int?      @map("department_id")
-  storeId        Int?      @map("store_id")
-  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  id                  String    @id @default(uuid()) @db.Uuid
+  employeeId          String    @map("employee_id") @db.Uuid
+  
+  // Tipe pergerakan: 'VOLUNTARY' atau 'INVOLUNTARY'
+  movementType        String    @map("movement_type") @db.VarChar(50) 
+  
+  movementDate        DateTime  @map("movement_date") @db.Date
+  
+  // Kategori alasan: 'RESIGN SOP', 'PHK', dll
+  reasonCategory      String?   @map("reason_category") @db.VarChar(100) 
+  
+  reasonDetail        String?   @map("reason_detail") @db.Text 
+  
+  // Kolom baru untuk memenuhi Mockup Dashboard HR
+  clearanceStatus     String?   @map("clearance_status") @db.VarChar(50)
+  backfillStatus      String?   @map("backfill_status") @db.VarChar(100)
+  retentionAction     String?   @map("retention_action") @db.VarChar(255)
+
+  divisionId          Int?      @map("division_id")
+  departmentId        Int?      @map("department_id")
+  storeId             Int?      @map("store_id")
+  createdAt           DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
 
   employee   Employee    @relation(fields: [employeeId], references: [id])
   division   Division?   @relation(fields: [divisionId], references: [id])
