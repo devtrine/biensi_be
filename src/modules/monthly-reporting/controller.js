@@ -3,6 +3,7 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const { success } = require('zod');
 const { getAttendanceAggregate } = require('./repository');
+const repository = require('./repository')
 
 const parseExcel = (filePath) => {
   const workbook = xlsx.readFile(filePath);
@@ -172,24 +173,39 @@ const uploadSales = async (req, res) => {
   }
 };
 
-// const uploadAttendanceUniversal = async (req, res) => {
-//   try {
-//     if (!req.file) throw new Error("File Excel absensi wajib diunggah!");
+const getActiveStorePerformance = async (req, res) => {
+  try {
+    const allPeriods = await repository.getAllPeriods();
     
-//     const rawData = parseExcel(req.file.path);
-//     // Panggil Service TANPA mengirimkan periodId!
-//     const data = await service.importAttendanceAggregate(rawData);
+    if (allPeriods.length === 0) {
+      return res.status(404).json({ success: false, message: "Belum ada data periode." });
+    }
     
-//     res.status(201).json({ 
-//       success: true, 
-//       message: `Berhasil memproses ${data.imported} bulan data absensi!`, 
-//       fileName: req.file.filename 
-//     });
-//   } catch (error) {
-//     if (req.file) fs.unlinkSync(req.file.path);
-//     res.status(400).json({ success: false, message: error.message });
-//   }
-// };
+    // Ambil ID dari periode paling atas/terbaru
+    const activePeriodId = allPeriods[0].id; 
+    
+    const result = await service.getStorePerformanceDashboard(activePeriodId);
+    result.periodId = activePeriodId; // Sisipkan ID agar Frontend tahu ini data bulan apa
+    
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Fungsi 2: Filter Historis (Bulan Spesifik berdasarkan URL)
+const getStorePerformanceByPeriod = async (req, res) => {
+  try {
+    const { periodId } = req.params; 
+    
+    const result = await service.getStorePerformanceDashboard(periodId);
+    result.periodId = periodId;
+
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 
 const uploadAttendanceUniversal = async (req, res) => {
   try {
@@ -214,8 +230,8 @@ const uploadSalesUniversal = async (req, res) => {
 };
 
 module.exports = { 
-  createPeriod, getAllPeriods, generateMonthlySnapshot,
-  uploadAttendance, uploadActualLabourCost, uploadSales, getSummary, 
-  uploadAttendanceUniversal, uploadSalesUniversal, getAttendance, getSales,
-  getAttendanceAggregate, getAllSales, getAllAttendance
+  createPeriod, getAllPeriods, generateMonthlySnapshot, uploadAttendance,
+  uploadActualLabourCost, uploadSales, getSummary, uploadAttendanceUniversal, 
+  uploadSalesUniversal, getAttendance, getSales, getAttendanceAggregate, 
+  getAllSales, getAllAttendance, getActiveStorePerformance, getStorePerformanceByPeriod
 };

@@ -62,10 +62,37 @@ const uploadBulkMovement = async (req, res) => {
   }
 };
 
+const getTurnoverDashboard = async (req, res) => {
+  try {
+    // 1. Ambil waktu saat ini sebagai default (Fallback)
+    const currentDate = new Date();
+    const defaultYear = currentDate.getFullYear();
+    const defaultMonth = currentDate.getMonth() + 1; // getMonth() mulai dari 0
+
+    // 2. Tangkap parameter dari URL query (?year=2026&month=12)
+    const year = parseInt(req.query.year) || defaultYear;
+    const month = parseInt(req.query.month) || defaultMonth;
+
+    // 3. Panggil Service
+    const result = await service.getTurnoverDashboard(year, month);
+
+    // 4. Kirim Response ke Frontend
+    res.status(200).json(result);
+  } catch (error) {
+    console.error("Error getTurnoverDashboard:", error.message);
+    res.status(500).json({ 
+      success: false, 
+      message: "Gagal mengambil data dashboard turnover",
+      error: error.message 
+    });
+  }
+};
+
 module.exports = { 
   getAllMovements, 
   getMovementById, 
   createMovement, 
   deleteMovement, 
-  uploadBulkMovement 
+  uploadBulkMovement,
+  getTurnoverDashboard 
 };

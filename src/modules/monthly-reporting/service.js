@@ -177,9 +177,7 @@ const importSales = async (periodId, rawData) => {
     salesQty: parseFloat(row.qty || 0),
     netSales: parseFloat(row.Value || 0)
   })).filter(row => !isNaN(row.storeId)); // Buang baris kosong yang storeId-nya tidak valid
-
   // 2. FASE PROCESS BULK (Panggil Repository)
-  // Ini memanggil prisma.salesMonthly.createMany() yang ada di repository.js
   const result = await repository.bulkCreateSales(formattedData);
   
   return { imported: result.count };
@@ -219,45 +217,104 @@ const getDashboardSummary = async (periodId) => {
     byEmploymentType: {}
   };
 
+  // --- TAMBAHAN: PENAMPUNG AGREGASI BIAYA ---
+  const costDistribution = {
+    byDivision: {},
+    byDepartment: {},
+    byEmploymentType: {}
+  };
+
   let totalBudget = 0;
   let totalActual = 0;
 
+  const STANDAR_HARI_KERJA = attendance ? parseFloat(attendance.workingDays || 22) : 22;
+
   snapshots.forEach(snap => {
     const emp = snap.employee;
-    
-    // Kalkulasi Finansial (Pastikan di-parse ke Float jika Decimal dari Prisma)
-    totalBudget += parseFloat(snap.budgetLabourCost || 0);
-    totalActual += parseFloat(snap.actualLabourCost || 0);
-
     if (!emp) return;
 
-    // A. Histori Umur yang Akurat (Tahun Periode - Tahun Lahir)
+    // --- KALKULASI FINANSIAL & ABSENSI ---
+    const budget = parseFloat(snap.budgetLabourCost || emp.baseSalary || 0); // Fallback ke baseSalary
+    
+    // Hitung Actual Cost (Opsi 1: Otomatis potong absen jika actualLabourCost kosong/nol)
+    let actual = parseFloat(snap.actualLabourCost || 0);
+    if (actual === 0 && attendance) {
+       // Asumsi kita punya data absen per karyawan di masa depan. 
+       // Untuk saat ini, kita fallback actual = budget jika tidak ada data absen spesifik.
+       actual = budget; 
+    }
+
+    totalBudget += budget;
+    totalActual += actual;
+
+    // A. Histori Umur
     if (emp.birthDate) {
       const birthYear = new Date(emp.birthDate).getFullYear();
-      const ageAtPeriod = period.year - birthYear; // Umur pada saat periode tersebut!
+      const ageAtPeriod = period.year - birthYear;
       totalAge += ageAtPeriod;
       validAgeCount++;
     }
 
-    // B. Grouping Divisi
+    // Variabel Penamaan Kategori
     const divName = emp.division?.name || 'Uncategorized';
-    distribution.byDivision[divName] = (distribution.byDivision[divName] || 0) + 1;
-
-    // C. Grouping Departemen
     const deptName = emp.department?.name || 'Uncategorized';
-    distribution.byDepartment[deptName] = (distribution.byDepartment[deptName] || 0) + 1;
-
-    // D. Grouping Gender
     const gender = emp.gender || 'Unknown';
-    distribution.byGender[gender] = (distribution.byGender[gender] || 0) + 1;
-
-    // E. Grouping Status Kontrak
     const status = emp.employmentType || 'Unknown';
+
+    // B. Grouping Demografi (Hitungan Kepala)
+    distribution.byDivision[divName] = (distribution.byDivision[divName] || 0) + 1;
+    distribution.byDepartment[deptName] = (distribution.byDepartment[deptName] || 0) + 1;
+    distribution.byGender[gender] = (distribution.byGender[gender] || 0) + 1;
     distribution.byEmploymentType[status] = (distribution.byEmploymentType[status] || 0) + 1;
+
+    // C. Grouping Biaya (Untuk Tab Labour Cost)
+    // 1. Biaya per Divisi
+    if (!costDistribution.byDivision[divName]) costDistribution.byDivision[divName] = { headcount: 0, budgetCost: 0, actualCost: 0 };
+    costDistribution.byDivision[divName].headcount += 1;
+    costDistribution.byDivision[divName].budgetCost += budget;
+    costDistribution.byDivision[divName].actualCost += actual;
+
+    // 2. Biaya per Departemen
+    if (!costDistribution.byDepartment[deptName]) costDistribution.byDepartment[deptName] = { headcount: 0, budgetCost: 0, actualCost: 0, parentDivision: divName };
+    costDistribution.byDepartment[deptName].headcount += 1;
+    costDistribution.byDepartment[deptName].budgetCost += budget;
+    costDistribution.byDepartment[deptName].actualCost += actual;
+
+    // 3. Biaya per Tipe Kontrak (Musiman vs Tetap)
+    if (!costDistribution.byEmploymentType[status]) costDistribution.byEmploymentType[status] = { headcount: 0, budgetCost: 0, actualCost: 0 };
+    costDistribution.byEmploymentType[status].headcount += 1;
+    costDistribution.byEmploymentType[status].budgetCost += budget;
+    costDistribution.byEmploymentType[status].actualCost += actual;
   });
 
   const avgAge = validAgeCount ? (totalAge / validAgeCount).toFixed(1) : 0;
   const totalSales = sales.reduce((sum, s) => sum + parseFloat(s.netSales || 0), 0);
+
+  // --- HELPER FORMATTING BIAYA ---
+  const formatCostAgg = (aggObj) => {
+    return Object.keys(aggObj).map(key => {
+      const item = aggObj[key];
+      const variansAmount = item.actualCost - item.budgetCost;
+      const variansPercentage = item.budgetCost > 0 ? (variansAmount / item.budgetCost) * 100 : 0;
+      
+      // Hitung Kontribusi Revenue Asumsi (Proporsional berdasarkan headcount jika tidak ada data real per divisi)
+      const assumedRevenue = totalSales > 0 ? (item.headcount / snapshots.length) * totalSales : 0;
+      const rasioThdRevenue = assumedRevenue > 0 ? ((item.actualCost / assumedRevenue) * 100).toFixed(2) + '%' : '0%';
+
+      return {
+        name: key,
+        parentDivision: item.parentDivision || null,
+        headcount: item.headcount,
+        budgetCost: item.budgetCost,
+        actualCost: item.actualCost,
+        revenueContribution: assumedRevenue,
+        labourCostRatio: rasioThdRevenue,
+        variansAmount: variansAmount,
+        variansPercentage: variansPercentage.toFixed(2) + '%',
+        statusAnggaran: variansAmount > 0 ? 'Melebihi Anggaran' : 'Sesuai Anggaran'
+      };
+    });
+  };
 
   // --- 4. SUSUN JSON FINAL UNTUK DASHBOARD ---
   return {
@@ -268,69 +325,216 @@ const getDashboardSummary = async (periodId) => {
     },
     demographics: {
       totalHeadcount: snapshots.length,
-      avgAgeAtPeriod: parseFloat(avgAge), // Penamaan lebih jelas!
-      distribution // Seluruh data pie-chart masuk ke sini
+      avgAgeAtPeriod: parseFloat(avgAge),
+      distribution
     },
     attendance: attendance || null,
     productivity: {
       totalBudgetCost: totalBudget,
-      totalActualCost: totalActual,
+      totalActualCost: totalActual, // Sekarang menggunakan Actual!
       totalSales: totalSales,
-      labourCostRatio: totalSales > 0 ? ((totalBudget / totalSales) * 100).toFixed(2) + '%' : '0%', // Mencegah bagi nol
-      revenuePerFte: snapshots.length > 0 ? (totalSales / snapshots.length).toFixed(2) : 0
+      labourCostRatio: totalSales > 0 ? ((totalActual / totalSales) * 100).toFixed(2) + '%' : '0%', // Diperbaiki: Pakai Actual
+      revenuePerFte: snapshots.length > 0 ? (totalSales / snapshots.length).toFixed(2) : 0,
+      
+      // --- DATA BARU UNTUK UI LABOUR COST ---
+      costByDivision: formatCostAgg(costDistribution.byDivision),
+      costByDepartment: formatCostAgg(costDistribution.byDepartment).sort((a, b) => b.actualCost - a.actualCost), // Langsung di-ranking
+      costByEmploymentType: formatCostAgg(costDistribution.byEmploymentType)
     },
     retention: {
-      // TODO: Nantinya di-query dari tabel EmployeeMovement berdasarkan bulan & tahun
       totalResigned: 0, 
       turnoverRate: "0%"
     }
   };
 };
+
+const getStorePerformanceDashboard = async (periodId) => {
+  // 1. Manfaatkan fungsi sakti dari repository Anda!
+  const salesData = await repository.getSalesByPeriod(periodId);
+  const employees = await repository.getActiveEmployeesForSnapshot();
+
+  // 2. Inisialisasi Variabel Penampung
+  const today = new Date();
+  let totalNetSales = 0;
+  let totalTargetSales = 0;
+  
+  const regionalData = {
+    BARAT: { storeCount: 0, headcount: 0, totalAge: 0, totalTenure: 0, sales: 0, target: 0 },
+    TIMUR: { storeCount: 0, headcount: 0, totalAge: 0, totalTenure: 0, sales: 0, target: 0 }
+  };
+
+  let managerTenureSum = 0; let managerCount = 0;
+  let frontlineTenureSum = 0; let frontlineCount = 0;
+  const leaderboard = [];
+  const storeEmployeeMap = {}; 
+
+  const calculateYears = (dateStr) => {
+    if (!dateStr) return 0;
+    return (today - new Date(dateStr)) / (1000 * 60 * 60 * 24 * 365.25);
+  };
+
+  // 3. Mapping Karyawan & Demografi
+  employees.forEach(emp => {
+    const region = emp.store?.region?.toUpperCase() || 'LAINNYA';
+    const age = calculateYears(emp.birthDate);
+    const tenure = calculateYears(emp.joinDate);
+    const posName = emp.position?.name?.toUpperCase() || 'UNKNOWN';
+    const storeId = emp.storeId;
+
+    if (!storeEmployeeMap[storeId]) storeEmployeeMap[storeId] = { managers: 0, staffs: 0, managerTenure: 0 };
+    
+    if (posName.includes('MANAGER') || posName.includes('LEADER')) {
+      storeEmployeeMap[storeId].managers++;
+      storeEmployeeMap[storeId].managerTenure = Math.max(storeEmployeeMap[storeId].managerTenure, tenure);
+      managerCount++;
+      managerTenureSum += tenure;
+    } else {
+      storeEmployeeMap[storeId].staffs++;
+      frontlineCount++;
+      frontlineTenureSum += tenure;
+    }
+
+    if (regionalData[region]) {
+      regionalData[region].headcount++;
+      regionalData[region].totalAge += age;
+      regionalData[region].totalTenure += tenure;
+    }
+  });
+
+  // 4. Mapping Penjualan & Leaderboard
+  salesData.forEach(sale => {
+    const region = sale.store?.region?.toUpperCase() || 'LAINNYA';
+    const actual = parseFloat(sale.netSales || 0);
+    const target = parseFloat(sale.targetSales || 0);
+    
+    totalNetSales += actual;
+    totalTargetSales += target;
+
+    if (regionalData[region]) {
+      regionalData[region].storeCount++;
+      regionalData[region].sales += actual;
+      regionalData[region].target += target;
+    }
+
+    const storeEmpStats = storeEmployeeMap[sale.storeId] || { managers: 0, staffs: 0, managerTenure: 0 };
+    const totalStaff = storeEmpStats.managers + storeEmpStats.staffs;
+    const achPercent = target > 0 ? (actual / target) * 100 : 0;
+    
+    // Anda bahkan bisa memanggil getSnapshotsByPeriod nanti jika ingin biaya riil
+    const estimatedLabourCost = totalStaff * 5000000; 
+
+    leaderboard.push({
+      storeName: sale.store?.storeName,
+      region: sale.store?.region,
+      storeType: sale.store?.storeType,
+      headcount: totalStaff,
+      spgRatio: `1 : ${storeEmpStats.managers > 0 ? (storeEmpStats.staffs / storeEmpStats.managers).toFixed(1) : storeEmpStats.staffs}`,
+      leaderTenure: storeEmpStats.managerTenure.toFixed(1),
+      netSales: actual,
+      targetSales: target,
+      achievement: achPercent.toFixed(1) + '%',
+      labourCost: estimatedLabourCost,
+      revenuePerFte: totalStaff > 0 ? actual / totalStaff : 0
+    });
+  });
+
+  // 5. Return JSON siap saji
+  const formatRegion = (data) => ({
+    storeCount: data.storeCount,
+    headcount: data.headcount,
+    avgAge: data.headcount ? (data.totalAge / data.headcount).toFixed(1) : 0,
+    avgTenure: data.headcount ? (data.totalTenure / data.headcount).toFixed(1) : 0,
+    achievement: data.target > 0 ? ((data.sales / data.target) * 100).toFixed(1) + '%' : '0%',
+    revenuePerFte: data.headcount ? (data.sales / data.headcount) : 0
+  });
+
+  return {
+    success: true,
+    data: {
+      overview: {
+        totalSales: totalNetSales,
+        targetAchievement: totalTargetSales > 0 ? ((totalNetSales / totalTargetSales) * 100).toFixed(1) + '%' : '0%',
+        retailAssociates: employees.length,
+        revenuePerFte: employees.length > 0 ? totalNetSales / employees.length : 0
+      },
+      regionalComparison: {
+        BARAT: formatRegion(regionalData.BARAT),
+        TIMUR: formatRegion(regionalData.TIMUR)
+      },
+      tenureGap: {
+        seniorManagerAvg: managerCount ? (managerTenureSum / managerCount).toFixed(1) : 0,
+        frontlineAvg: frontlineCount ? (frontlineTenureSum / frontlineCount).toFixed(1) : 0,
+        gapYears: ((managerCount ? managerTenureSum/managerCount : 0) - (frontlineCount ? frontlineTenureSum/frontlineCount : 0)).toFixed(1)
+      },
+      storeLeaderboard: leaderboard.sort((a, b) => parseFloat(b.achievement) - parseFloat(a.achievement))
+    }
+  };
+};
+
 //Universal Import 
 const importAttendanceUniversal = async (raw2DArray) => {
   let successCount = 0;
-  let headerIndex = -1;
+  let currentScope = 'HQ'; // Default awal
+  let currentHeaders = [];
 
-  // 1. Cari secara dinamis di baris mana HRD menaruh Header "BULAN"
+  // 1. Looping setiap baris dari atas ke bawah
   for (let i = 0; i < raw2DArray.length; i++) {
-    if (raw2DArray[i].some(cell => typeof cell === 'string' && cell.toUpperCase().includes('BULAN'))) {
-      headerIndex = i;
-      break;
+    const row = raw2DArray[i];
+    
+    // Gabungkan teks dalam baris untuk mempermudah deteksi
+    const rowString = row.join(' ').toUpperCase();
+
+    // 2. Deteksi Baris Header & Transisi Scope
+    if (rowString.includes('BULAN')) {
+      // Bersihkan dan simpan susunan kolom header saat ini
+      currentHeaders = row.map(h => typeof h === 'string' ? h.toUpperCase().replace(/\s+/g, ' ').trim() : h);
+      
+      // Deteksi identitas tabel berdasarkan teks di row tersebut
+      if (rowString.includes('HEAD OFFICE') || rowString.includes('HO')) {
+        currentScope = 'HQ';
+      } else if (rowString.includes('STORE')) {
+        currentScope = 'STORE';
+      }
+      continue; // Skip baris header ini, lanjut ke baris datanya
     }
-  }
 
-  if (headerIndex === -1) throw new Error("Format salah: Kolom 'BULAN' tidak ditemukan di Excel.");
+    // 3. Baca Baris Data (Hanya berjalan jika header sudah didapatkan)
+    if (currentHeaders.length === 0) continue;
 
-  const headers = raw2DArray[headerIndex].map(h => typeof h === 'string' ? h.toUpperCase().trim() : h);
-  const dataRows = raw2DArray.slice(headerIndex + 1);
-
-  // 2. Looping setiap baris data (bisa dari Jan s.d Des)
-  for (const row of dataRows) {
-    // Map Array menjadi Object berdasarkan index header
     const rowData = {};
-    headers.forEach((header, index) => {
+    currentHeaders.forEach((header, index) => {
       if (header) rowData[header] = row[index];
     });
 
-    if (!rowData['BULAN']) continue; // Skip baris kosong
+    // Skip baris kosong atau baris pemisah antar tabel
+    if (!rowData['BULAN']) continue; 
 
+    // 4. Parsing Periode
     const parsedDate = parseMonthYear(rowData['BULAN']);
     if (!parsedDate) continue;
 
     const periodId = await getOrCreatePeriodId(parsedDate.year, parsedDate.month);
 
-    // Ambil data (mendukung variasi pengetikan nama kolom HRD)
+    // 5. Ambil Data Dinamis (Menangani penamaan kolom Jumlah Karyawan yang berubah-ubah)
+    const totalEmpKey = Object.keys(rowData).find(key => 
+      key.includes('KARY') && (key.includes('HEAD OFFICE') || key.includes('STORE') || key.includes('HO'))
+    );
+    
     const data = {
-      totalEmployees: parseInt(rowData['JUMLAH KARYWAN'] || rowData['JUMLAH KARYAWAN STORE'] || 0),
+      totalEmployees: parseInt(rowData[totalEmpKey] || rowData['JUMLAH KARYWAN'] || 0),
       sickCount: parseInt(rowData['JML KARYAWAN SAKIT'] || 0),
       permissionCount: parseInt(rowData['JML KARYAWAN IJIN'] || 0),
       annualLeaveCount: parseInt(rowData['CUTI TAHUNAN'] || 0),
       absentCount: parseInt(rowData['ALPHA'] || 0),
-      workingDays: parseInt(rowData['HARI KERJA'] || 0), // Klien kadang kosong, bisa set default 22
+      workingDays: parseInt(rowData['HARI KERJA'] || 22), 
       attendanceRate: parseFloat(rowData['%TASE KEHADIRAN'] || 0)
     };
 
-    await repository.upsertAttendanceAggregate(periodId, data);
+    // Abaikan jika data isinya nol semua (mencegah error dari sel kosong)
+    if (data.totalEmployees === 0 && data.sickCount === 0 && data.absentCount === 0) continue;
+
+    // 6. Simpan ke Database menyertakan scope!
+    await repository.upsertAttendanceAggregate(periodId, currentScope, data);
     successCount++;
   }
   
@@ -413,7 +617,7 @@ const importSalesUniversal = async (filePath) => {
 };
 
 module.exports = { 
-  openNewPeriod, getPeriods, generateSnapshot,
+  openNewPeriod, getPeriods, generateSnapshot, getStorePerformanceDashboard,
   importAttendanceAggregate, importActualLabourCost, importSales, getDashboardSummary,
   importAttendanceUniversal, importSalesUniversal, getAttendance, getSales, getAttendanceAggregate, getAllSales
 };

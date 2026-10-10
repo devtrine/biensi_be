@@ -5,7 +5,7 @@ const controller = require('./controller');
 const { authenticate } = require('../../middleware/auth');
 const multer = require('multer');
 const path = require('path'); // Bawaan Node.js, tidak perlu di-install
-
+const uploader = require('../../middleware/upload')
 // Konfigurasi Storage Permanen
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -41,12 +41,14 @@ router.use(authenticate);
 // Manajemen Periode
 router.get('/', controller.getAllPeriods);
 router.post('/', controller.createPeriod);
+router.get('/produktivitas/active', controller.getActiveStorePerformance);
+router.get('/produktivitas/:periodId', controller.getStorePerformanceByPeriod);
 router.get('/:periodId/summary', controller.getSummary);
 router.post('/:periodId/snapshots/generate', controller.generateMonthlySnapshot);
 
 // Endpoint Upload File (Sama persis polanya dengan Employee)
 router.post('/:periodId/attendance', upload.single('file'), controller.uploadAttendance);
-router.post('/:periodId/labour-costs', upload.single('file'), controller.uploadActualLabourCost);
+// router.post('/:periodId/labour-costs', upload.single('file'), controller.uploadActualLabourCost);
 router.post('/:periodId/sales', upload.single('file'), controller.uploadSales);
 
 router.get('/attendance', controller.getAllAttendance);

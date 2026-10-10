@@ -10,14 +10,14 @@ http:
     type: json
     data: |-
       {
-        "storeType": "Kiosk"
+        "region": "BARAT"
       }
   auth: inherit
 
 runtime:
   variables:
     - name: id
-      value: "1"
+      value: "122"
 
 settings:
   encodeUrl: true

@@ -1,0 +1,21 @@
+info:
+  name: Produktivitas Bulanan
+  type: http
+  seq: 12
+
+http:
+  method: GET
+  url: http://localhost:5000/api/v1/reporting-monthly/produktivitas/{{periodId}}
+  auth: inherit
+
+runtime:
+  variables:
+    - name: periodId
+      value: c7c9d3ac-9c2b-49b0-883d-f925b1b0b3c8
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

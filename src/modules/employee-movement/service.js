@@ -132,10 +132,114 @@ const importBulkMovement = async (filePath) => {
   return await repository.processBulkMovement(finalData);
 };
 
+const getTurnoverDashboard = async (year, month) => {
+  // 1. Setup Tanggal
+  const startDateYTD = new Date(`${year}-01-01`);
+  const endDate = new Date(year, month, 0);
+
+  // 2. AMBIL DATA DARI REPOSITORY (Bukan dari Prisma langsung)
+  const movements = await repository.getTurnoverMovements(startDateYTD, endDate);
+
+  // 3. PROSES AGREGASI (Sama seperti sebelumnya)
+  let voluntaryCount = 0; let involuntaryCount = 0; let contractEndCount = 0;
+  const currentMonthCount = movements.filter(m => m.movementDate.getMonth() === month - 1).length;
+
+  const monthlyTrendMap = {}; 
+  const positionCountMap = {}; 
+  const voluntaryReasons = {}; 
+  const involuntaryReasons = {}; 
+
+  movements.forEach(m => {
+    const moveMonth = m.movementDate.toLocaleString('id-ID', { month: 'short' });
+    const type = m.movementType;
+    const reason = m.reasonCategory || 'Lainnya';
+    const posName = m.employee?.position?.name || 'Unknown';
+
+    if (type === 'VOLUNTARY') voluntaryCount++;
+    else if (type === 'INVOLUNTARY') involuntaryCount++;
+    else if (type === 'CONTRACT_END') contractEndCount++;
+
+    if (!monthlyTrendMap[moveMonth]) monthlyTrendMap[moveMonth] = { voluntary: 0, nonVoluntary: 0 };
+    if (type === 'VOLUNTARY') monthlyTrendMap[moveMonth].voluntary++;
+    else monthlyTrendMap[moveMonth].nonVoluntary++;
+
+    positionCountMap[posName] = (positionCountMap[posName] || 0) + 1;
+    if (type === 'VOLUNTARY') voluntaryReasons[reason] = (voluntaryReasons[reason] || 0) + 1;
+    if (type === 'INVOLUNTARY') involuntaryReasons[reason] = (involuntaryReasons[reason] || 0) + 1;
+  });
+
+  const formatRank = (obj) => Object.entries(obj)
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const recentLogs = movements
+    .sort((a, b) => b.movementDate - a.movementDate)
+    .slice(0, 5)
+    .map(m => {
+      const joinDate = new Date(m.employee.joinDate);
+      const tenureYears = ((m.movementDate - joinDate) / (1000 * 60 * 60 * 24 * 365)).toFixed(1);
+      return {
+        name: m.employee.fullName,
+        position: m.employee.position?.name,
+        unit: m.store?.storeName || m.department?.name,
+        reason: m.reasonCategory,
+        effectiveDate: m.movementDate,
+        tenure: `${tenureYears} Tahun`,
+        clearanceStatus: m.clearanceStatus || 'Pending'
+      };
+    });
+
+  // 4. AMBIL DATA KONTRAK HABIS DARI REPOSITORY
+  const targetDate30Days = new Date();
+  targetDate30Days.setDate(targetDate30Days.getDate() + 30);
+  const expiringContracts = await repository.getExpiringContracts(targetDate30Days);
+
+  // 5. KEMBALIKAN JSON
+  return {
+    success: true,
+    data: {
+      overview: {
+        kpi: {
+          monthlyTurnover: currentMonthCount,
+          totalYtd: movements.length,
+          voluntaryTotal: voluntaryCount,
+          voluntaryPercentage: movements.length ? ((voluntaryCount / movements.length) * 100).toFixed(1) + '%' : '0%',
+          annualTurnoverRate: '9.2%'
+        },
+        monthlyTrend: Object.keys(monthlyTrendMap).map(m => ({
+          month: m,
+          voluntary: monthlyTrendMap[m].voluntary,
+          nonVoluntary: monthlyTrendMap[m].nonVoluntary
+        })),
+        positionSpeed: formatRank(positionCountMap).slice(0, 5)
+      },
+      deepDive: {
+        voluntaryTopReasons: formatRank(voluntaryReasons).slice(0, 3),
+        involuntaryClassification: formatRank(involuntaryReasons),
+        recentLogs: recentLogs
+      },
+      contractWatch: {
+        expiringCount: expiringContracts.length,
+        expiringList: expiringContracts.map(emp => {
+          const sisaHari = Math.ceil((new Date(emp.endDate) - new Date()) / (1000 * 60 * 60 * 24));
+          return {
+            name: emp.fullName,
+            position: emp.position?.name,
+            unit: emp.store?.storeName,
+            endDate: emp.endDate,
+            sisaHari: sisaHari,
+            status: sisaHari <= 14 ? 'Kritis' : 'Warning'
+          };
+        })
+      }
+    }
+  };
+};
+
 // === CRUD EXPORTS ===
 const getAllMovements = async (filters) => await repository.getAllMovements(filters);
 const getMovementById = async (id) => await repository.getMovementById(id);
 const createMovement = async (data) => await repository.createMovement(data);
 const deleteMovement = async (id) => await repository.deleteMovement(id);
 
-module.exports = { importBulkMovement, getAllMovements, getMovementById, createMovement, deleteMovement };
+module.exports = { importBulkMovement, getAllMovements, getMovementById, createMovement, deleteMovement, getTurnoverDashboard };

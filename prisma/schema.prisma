@@ -291,6 +291,7 @@ model AttendanceAggregateMonthly {
   id               String   @id @default(uuid()) @db.Uuid
   periodId         String   @unique @map("period_id") @db.Uuid
   totalEmployees   Int      @map("total_employees")
+  scope            String?   @map("scope") @db.VarChar(50)
   sickCount        Int      @default(0) @map("sick_count")
   permissionCount  Int      @default(0) @map("permission_count")
   annualLeaveCount Int      @default(0) @map("annual_leave_count")
@@ -300,16 +301,18 @@ model AttendanceAggregateMonthly {
   createdAt        DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
 
   period ReportingPeriod @relation(fields: [periodId], references: [id])
+  @@unique([periodId, scope])
   @@map("attendance_aggregate_monthly")
 }
 
 model SalesMonthly {
-  id        String    @id @default(uuid()) @db.Uuid
-  periodId  String    @map("period_id") @db.Uuid
-  storeId   Int       @map("store_id")
-  salesQty  Decimal?  @default(0) @map("sales_qty") @db.Decimal(18, 2)
-  netSales  Decimal?  @default(0) @map("net_sales") @db.Decimal(18, 2)
-  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  id           String    @id @default(uuid()) @db.Uuid
+  periodId     String    @map("period_id") @db.Uuid
+  storeId      Int       @map("store_id")
+  salesQty     Decimal?  @default(0) @map("sales_qty") @db.Decimal(18, 2)
+  netSales     Decimal?  @default(0) @map("net_sales") @db.Decimal(18, 2)
+  targetSales  Decimal?  @map("target_sales") @db.Decimal(18, 2)
+  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
 
   period ReportingPeriod @relation(fields: [periodId], references: [id])
   store  Store           @relation(fields: [storeId], references: [id])

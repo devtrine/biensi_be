@@ -6,6 +6,7 @@ const uploader = require('../../middleware/upload');       // Asumsi letak uploa
 
 router.use(authenticate); 
 router.get('/', controller.getAllMovements);
+router.get('/dashboard', controller.getTurnoverDashboard);
 router.get('/:id', controller.getMovementById);
 router.post('/', controller.createMovement);
 router.delete('/:id', controller.deleteMovement);

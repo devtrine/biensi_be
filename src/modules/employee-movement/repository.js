@@ -200,10 +200,37 @@ const processBulkMovement = async (parsedData) => {
   return { sukses: successCount, gagal: errorList.length, errorList };
 };
 
+const getTurnoverMovements = async (startDate, endDate) => {
+  return await prisma.employeeMovement.findMany({
+    where: {
+      movementDate: { gte: startDate, lte: endDate },
+      movementType: { in: ['VOLUNTARY', 'INVOLUNTARY', 'CONTRACT_END'] }
+    },
+    include: {
+      employee: { include: { position: true } },
+      store: true,
+      department: true
+    }
+  });
+};
+
+const getExpiringContracts = async (targetDate) => {
+  return await prisma.employee.findMany({
+    where: { 
+      endDate: { lte: targetDate, gt: new Date() }, 
+      status: 'ACTIVE' 
+    },
+    include: { store: true, position: true },
+    take: 6
+  });
+};
+
 module.exports = {
   getAllMovements,
   getMovementById,
   createMovement,
   deleteMovement,
-  processBulkMovement
+  processBulkMovement,
+  getExpiringContracts,
+  getTurnoverMovements
 };

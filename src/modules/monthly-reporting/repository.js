@@ -47,7 +47,8 @@ const getAllSales = async () => {
 // --- 2. SNAPSHOT CLONING ENGINE ---
 const getActiveEmployeesForSnapshot = async () => {
   return await prisma.employee.findMany({
-    include: { position: true } 
+    where: { status: 'ACTIVE', storeId: { not: null } }, // Pastikan hanya anak toko
+    include: { position: true, store: true } // <-- Tambahkan store: true
   });
 };
 
@@ -58,11 +59,20 @@ const bulkCreateSnapshots = async (snapshotDataArray) => {
   });
 };
 
-const upsertAttendanceAggregate = async (periodId, data) => {
+const upsertAttendanceAggregate = async (periodId, scope, data) => {
   return await prisma.attendanceAggregateMonthly.upsert({
-    where: { periodId },
+    where: {
+      periodId_scope: {
+        periodId: periodId,
+        scope: scope
+      }
+    },
     update: data,
-    create: { periodId, ...data }
+    create: {
+      periodId,
+      scope,
+      ...data
+    }
   });
 };
 
