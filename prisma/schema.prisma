@@ -135,15 +135,16 @@ model Store {
 }
 
 model StoreCompliance {
-  id           String   @id @default(uuid()) @db.Uuid
-  storeId      Int      @map("store_id")
-  documentType String   @map("document_type") @db.VarChar(50)
-  validFrom    DateTime @map("valid_from") @db.Date
-  validUntil   DateTime @map("valid_until") @db.Date
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  id           String    @id @default(uuid()) @db.Uuid
+  storeId      Int       @map("store_id")
+  documentType String    @map("document_type") @db.VarChar(50)
+  status       String?   @db.VarChar(50) // Tambahan: PATUH, KADALUARSA, dll
+  validFrom    DateTime? @map("valid_from") @db.Date  // JADIKAN OPSIONAL (?)
+  validUntil   DateTime? @map("valid_until") @db.Date // JADIKAN OPSIONAL (?)
+  description  String?   @db.Text // Tambahan untuk menyimpan "Deskripsi Instrumen" seperti di UI
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
 
   store Store @relation(fields: [storeId], references: [id])
-
   @@map("store_compliances")
 }
 
@@ -385,6 +386,7 @@ model DisciplinaryCase {
   startDate      DateTime? @map("start_date") @db.Date
   endDate        DateTime? @map("end_date") @db.Date
   remark         String?   @db.Text
+  status         String?   @default("AKTIF") @db.VarChar(50)
   divisionId     Int?      @map("division_id")
   departmentId   Int?      @map("department_id")
   storeId        Int?      @map("store_id")
@@ -409,6 +411,7 @@ model FraudCase {
   disciplineId   String?   @map("discipline_id") @db.Uuid
   fraudCategory  String?   @map("fraud_category") @db.VarChar(100)
   remark         String?   @db.Text
+  status         String?   @default("OPEN") @db.VarChar(50)
   discrepancyQty Decimal?  @map("discrepancy_qty") @db.Decimal(18, 2)
   bakbAmount     Decimal?  @map("bakb_amount") @db.Decimal(18, 2)
   salesTarget    Decimal?  @map("sales_target") @db.Decimal(18, 2)
