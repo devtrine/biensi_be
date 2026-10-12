@@ -26,7 +26,21 @@ const loginController = async (req, res) => {
     });
   }
 };
+const logoutController = async (req, res) => {
+  try {
+    await service.logout(req.user.id);
+    return res.status(200).json({
+      success: true,
+      message: 'Logout berhasil. Silakan hapus token di sisi klien.'
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: error.message }
+    });
+  }
+};
 
 module.exports = {
-  loginController
+  loginController, logoutController
 };

@@ -1,47 +1,25 @@
 const express = require('express');
 const controller = require('./controller');
-const { authenticate } = require('../../middleware/auth');
+const { authenticate, checkPermission } = require('../../middleware/auth');
 const router = express.Router();
-const multer = require('multer');
-const path = require('path'); // Bawaan Node.js, tidak perlu di-install
-
-// Konfigurasi Storage Permanen
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/'); // Simpan di folder uploads
-  },
-  filename: function (req, file, cb) {
-    // Beri nama file yang unik dan bisa dibaca manusia: 
-    // Contoh: "Import_Pegawai_1696515848000.xlsx"
-    const uniqueSuffix = Date.now();
-    const cleanName = file.originalname.replace(/\s+/g, '_'); // Ganti spasi dengan underscore
-    cb(null, `Import_${uniqueSuffix}_${cleanName}`);
-  }
-});
-
-const upload = multer({ 
-  storage: storage, // Gunakan storage custom kita
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const allowedMimeTypes = [
-      'application/vnd.ms-excel', 
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    ];
-    if (allowedMimeTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Format file ditolak! Hanya file Excel (.xlsx / .xls) yang diperbolehkan.'));
-    }
-  }
-});
+const uploader = require('../../middleware/upload')
 
 router.use(authenticate);
-router.post('/import', upload.single('file'), controller.importEmployees);
+// GET (Lihat Data): Membutuhkan centang 'view' di JSON
+router.get('/', checkPermission('employees', 'view'), controller.getEmployees);
+router.get('/:id', checkPermission('employees', 'view'), controller.getEmployeeById);
 
-router.get('/', controller.getEmployees);
-router.get('/:id', controller.getEmployeeById);
-router.post('/', controller.createEmployee);
-router.put('/:id', controller.updateEmployee);
-router.delete('/:id', controller.deleteEmployee);
+// POST (Tambah Data): Membutuhkan centang 'create' di JSON
+router.post('/', checkPermission('employees', 'create'), controller.createEmployee);
+
+// Khusus Import: Karena fungsinya menambah/menimpa data karyawan, kita bisa menggunakan izin 'create'
+// (Atau jika Anda punya baris matriks khusus import, bisa ubah menjadi checkPermission('import', 'create'))
+router.post('/import', uploader.upload.single('file'), controller.importEmployees);
+
+// PUT (Ubah Data): Membutuhkan centang 'edit' di JSON
+router.put('/:id', checkPermission('employees', 'edit'), controller.updateEmployee);
+
+// DELETE (Hapus Data): Membutuhkan centang 'delete' di JSON
+router.delete('/:id', checkPermission('employees', 'delete'), controller.deleteEmployee);
 
 module.exports = router;

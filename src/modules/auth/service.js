@@ -13,14 +13,15 @@ const login = async (email, password) => {
     throw new Error('Password salah');
   }
 
-  // Buat Payload JWT
+  // --- TAMBAHAN BARU: Catat waktu login ---
+  await repository.updateLastLogin(user.id);
+
   const payload = {
     id: user.id,
     roleId: user.roleId,
     permissions: user.role.permissions
   };
   
-  // Pastikan Anda sudah menambahkan JWT_SECRET di file .env
   const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1d' });
 
   return {
@@ -28,12 +29,15 @@ const login = async (email, password) => {
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role.name
+      role: user.role.name,
+      photoUrl: user.photoUrl // Opsional: kirim foto agar header FE langsung ter-update
     },
     token
   };
 };
 
-module.exports = {
-  login
+const logout = async (userId) => {
+  return true;
 };
+
+module.exports = { login, logout }; 

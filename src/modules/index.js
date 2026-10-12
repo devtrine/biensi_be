@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 const authRoutes = require('./auth/routes');
+const administrationRoutes = require('./administration/routes')
 const storeRoutes = require('./store/routes');
 const divisionRoutes = require('./division/routes');
 const departmentRoutes = require('./department/routes');
@@ -14,6 +15,7 @@ const disciplinaryRoutes = require ('./disciplinary/routes');
 const compilanceRoutes = require ('./compilance/routes');
 
 router.use('/auth', authRoutes);
+router.use('/administration', administrationRoutes);
 router.use('/stores', storeRoutes);
 router.use('/divisions', divisionRoutes);
 router.use('/departments', departmentRoutes);

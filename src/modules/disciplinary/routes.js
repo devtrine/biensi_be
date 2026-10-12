@@ -6,9 +6,9 @@ const uploader = require('../../middleware/upload');
 
 router.use(authenticate);
 
-router.post('/import-sp', uploader.single('file'), controller.importBulkSP);
-router.post('/import-fraud', uploader.single('file'), controller.importBulkFraud);
-router.post('/import-bipartit', uploader.single('file'), controller.importBulkBipartit);
+router.post('/import-sp', uploader.upload.single('file'), controller.importBulkSP);
+router.post('/import-fraud', uploader.upload.single('file'), controller.importBulkFraud);
+router.post('/import-bipartit', uploader.upload.single('file'), controller.importBulkBipartit);
 
 // 2. Endpoint CRUD Standar
 router.get('/dashboard', controller.getDashboardOverview);

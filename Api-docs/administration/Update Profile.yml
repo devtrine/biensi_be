@@ -1,0 +1,16 @@
+info:
+  name: Update Profile
+  type: http
+  seq: 2
+
+http:
+  method: PUT
+  url: http://localhost:5000/api/v1/administration/profile
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

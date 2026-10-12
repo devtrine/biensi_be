@@ -12,8 +12,16 @@ const findUserByEmail = async (email) => {
         include: { role : true }
     });
 };
+// --- TAMBAHAN BARU ---
+const updateLastLogin = async (userId) => {
+    return await prisma.user.update({
+        where: { id: userId },
+        data: { lastLogin: new Date() }
+    });
+};
 
 module.exports = {
     createUser,
-    findUserByEmail
+    findUserByEmail,
+    updateLastLogin
 }

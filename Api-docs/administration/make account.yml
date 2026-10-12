@@ -1,0 +1,19 @@
+info:
+  name: make account
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: http://localhost:5000/api/v1/administration/users
+  body:
+    type: json
+    data: ""
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

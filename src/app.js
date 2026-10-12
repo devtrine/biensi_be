@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 // Import rute utama dari aggregator modul
 const apiRoutes = require('./modules/index');
@@ -23,6 +24,8 @@ app.get('/', (req, res) => {
 
 // Mount semua rute modul ke awalan /api/v1
 app.use('/api/v1', apiRoutes);
+
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use((req, res, next) => {
   res.status(404).json({

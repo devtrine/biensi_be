@@ -32,4 +32,36 @@ const authenticate = (req, res, next) => {
   }
 };
 
-module.exports = { authenticate };
+const checkPermission = (moduleName, action) => {
+  return (req, res, next) => {
+    try {
+      const user = req.user; // Didapat dari middleware authenticate sebelumnya
+
+      // 1. HIERARKI MUTLAK: Jika dia Super Admin, biarkan lewat tanpa cek JSON!
+      if (user.roleId === 1) { // Asumsi ID 1 selalu Super Admin
+        return next();
+      }
+
+      // 2. CEK JSON PERMISSIONS
+      // Contoh struktur JSON di DB: { "users": { "view": true, "create": false }, "attendance": { ... } }
+      const permissions = user.permissions;
+
+      if (!permissions || !permissions[moduleName] || !permissions[moduleName][action]) {
+        return res.status(403).json({
+          success: false,
+          error: { 
+            code: 'FORBIDDEN', 
+            message: `Akses ditolak. Anda tidak memiliki izin untuk ${action} pada modul ${moduleName}.` 
+          }
+        });
+      }
+
+      // Jika true, silakan masuk ke Controller
+      next(); 
+    } catch (error) {
+      return res.status(500).json({ success: false, message: 'Kesalahan otorisasi internal.' });
+    }
+  };
+};
+
+module.exports = { authenticate, checkPermission };

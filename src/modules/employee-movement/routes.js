@@ -12,6 +12,6 @@ router.post('/', controller.createMovement);
 router.delete('/:id', controller.deleteMovement);
 
 // KUNCI PERBAIKAN: Gunakan upload.single('file') langsung dari instance multer yang di-export
-router.post('/bulk-upload', uploader.single('file'), controller.uploadBulkMovement);
+router.post('/bulk-upload', uploader.upload.single('file'), controller.uploadBulkMovement);
 
 module.exports = router;
