@@ -254,7 +254,7 @@ model ReportingPeriod {
   kpiPositions    KpiPosition[]
   
   // ---> PERUBAHAN: HAPUS relasi labourCosts & attendanceRecords lama, TAMBAH agregat <---
-  attendanceAggregate AttendanceAggregateMonthly?
+  attendanceAggregate AttendanceAggregateMonthly[]
 
   @@unique([year, month])
   @@map("reporting_periods")
@@ -297,9 +297,9 @@ model EmployeeMonthlySnapshot {
 // ---> PERUBAHAN: TAMBAH MODEL BARU INI <---
 model AttendanceAggregateMonthly {
   id               String   @id @default(uuid()) @db.Uuid
-  periodId         String   @unique @map("period_id") @db.Uuid
+  periodId         String   @map("period_id") @db.Uuid
   totalEmployees   Int      @map("total_employees")
-  scope            String?   @map("scope") @db.VarChar(50)
+  scope            String?  @map("scope") @db.VarChar(50)
   sickCount        Int      @default(0) @map("sick_count")
   permissionCount  Int      @default(0) @map("permission_count")
   annualLeaveCount Int      @default(0) @map("annual_leave_count")

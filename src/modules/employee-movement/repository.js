@@ -1,10 +1,18 @@
 const prisma = require('../../config/database');
 
+const normalizeText = (val) => {
+  if (!val) return null;
+  let clean = String(val).trim().replace(/\s+/g, ' ').toUpperCase();
+  if (clean === 'COMERCIAL BUSSINESS' || clean === 'COMERCIAL BUSINESS') {
+    clean = 'COMMERCIAL BUSINESS';
+  }
+  return clean;
+};
+
 const getAllMovements = async (filters) => {
   const { page = 1, limit = 10, search, movementType } = filters;
   const skip = (page - 1) * limit;
 
-  // Bangun query filter
   const where = {};
   if (movementType) where.movementType = movementType;
   if (search) {
@@ -13,13 +21,12 @@ const getAllMovements = async (filters) => {
     };
   }
 
-  // Tarik data sekaligus hitung total (untuk pagination)
   const [data, total] = await Promise.all([
     prisma.employeeMovement.findMany({
       where,
       skip: parseInt(skip),
       take: parseInt(limit),
-      orderBy: { movementDate: 'desc' }, // Urutkan dari yang terbaru
+      orderBy: { movementDate: 'desc' },
       include: {
         employee: { select: { fullName: true, employeeNo: true, joinDate: true } },
         store: { select: { storeName: true, region: true } }
@@ -62,10 +69,13 @@ const processBulkMovement = async (parsedData) => {
 
   for (const row of parsedData) {
     try {
-      // 1. === AUTO-UPDATE/CREATE STORE ===
+      const cleanEmpName = normalizeText(row.employeeName);
+      if (!cleanEmpName) continue;
+
+      // 1. === AUTO-UPDATE / CREATE STORE ===
       let storeId = null;
-      if (row.storeName) {
-        const cleanStoreName = String(row.storeName).trim();
+      const cleanStoreName = normalizeText(row.storeName);
+      if (cleanStoreName && cleanStoreName !== 'TOTAL') {
         let store = await prisma.store.findFirst({
           where: { storeName: { equals: cleanStoreName, mode: 'insensitive' } }
         });
@@ -75,122 +85,144 @@ const processBulkMovement = async (parsedData) => {
             data: {
               storeName: cleanStoreName,
               storeCode: `STR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-              region: row.region,
-              storeType: row.storeType,
-              asstHead: row.asstHead
+              region: normalizeText(row.region),
+              storeType: normalizeText(row.storeType),
+              asstHead: normalizeText(row.asstHead)
             }
           });
         } else {
-          // Jika toko sudah ada, PERKAYA datanya jika sebelumnya kosong
           await prisma.store.update({
             where: { id: store.id },
             data: {
-              region: row.region || store.region,
-              storeType: row.storeType || store.storeType,
-              asstHead: row.asstHead || store.asstHead
+              region: normalizeText(row.region) || store.region,
+              storeType: normalizeText(row.storeType) || store.storeType,
+              asstHead: normalizeText(row.asstHead) || store.asstHead
             }
           });
         }
         storeId = store.id;
       }
 
-    // 1. === AUTO-CREATE / CARI DIVISI ===
+      // 2. === AUTO-CREATE / CARI DIVISI & DEPARTEMEN ===
       let divisionId = null;
-      if (row.divisionName) {
-        const cleanDivName = String(row.divisionName).trim();
+      const cleanDivName = normalizeText(row.divisionName);
+      if (cleanDivName) {
         let division = await prisma.division.findFirst({
-          where: { name: { equals: cleanDivName, mode: 'insensitive' } } 
+          where: { name: { equals: cleanDivName, mode: 'insensitive' } }
         });
-
         if (!division) {
           division = await prisma.division.create({
-            data: { 
+            data: {
               name: cleanDivName,
-              // Tambahkan dummy code untuk jaga-jaga jika Division butuh code
-              code: `DIV-${Date.now()}-${Math.floor(Math.random() * 1000)}` 
-            } 
+              code: `DIV-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+            }
           });
         }
         divisionId = division.id;
       }
 
-      // 2. === AUTO-CREATE / CARI DEPARTEMEN ===
       let departmentId = null;
-      if (row.departmentName) {
-        const cleanDeptName = String(row.departmentName).trim();
+      const cleanDeptName = normalizeText(row.departmentName);
+      if (cleanDeptName) {
         let department = await prisma.department.findFirst({
-          where: { name: { equals: cleanDeptName, mode: 'insensitive' } } 
+          where: { name: { equals: cleanDeptName, mode: 'insensitive' } }
         });
-
-        if (!department) {
+        if (!department && divisionId) {
           department = await prisma.department.create({
-            data: { 
+            data: {
               name: cleanDeptName,
-              // ---> INI SOLUSI ERRORNYA: Tambahkan dummy code <---
               code: `DPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-              divisionId: divisionId 
+              divisionId: divisionId
             }
           });
         }
-        departmentId = department.id;
+        if (department) departmentId = department.id;
       }
 
-      // 2. === CARI KARYAWAN ATAU AUTO-CREATE HISTORICAL EMPLOYEE ===
-      let employee = await prisma.employee.findFirst({
-        where: { fullName: { equals: row.employeeName, mode: 'insensitive' } }
-      });
+      // 3. === CARI KARYAWAN (PRIORITAS 1: NIK, PRIORITAS 2: NAMA) & AUTO-INACTIVE ===
+      let employee = null;
+      const cleanEmpNo = row.employeeNo ? String(row.employeeNo).trim().toUpperCase() : null;
+
+      if (cleanEmpNo) {
+        employee = await prisma.employee.findFirst({
+          where: { employeeNo: { equals: cleanEmpNo, mode: 'insensitive' } }
+        });
+      }
+      if (!employee) {
+        employee = await prisma.employee.findFirst({
+          where: { fullName: { equals: cleanEmpName, mode: 'insensitive' } }
+        });
+      }
+
+      const safeJoinDate = row.joinDate || new Date(row.movementDate.getFullYear(), 0, 1);
 
       if (!employee) {
-        // Helper NIK Pintar (Format YYYYMMDD)
         const formatDate = (date) => {
           if (!date) return '00000000';
           const d = new Date(date);
           return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
         };
 
-        const safeJoinDate = row.joinDate || new Date(row.movementDate.getFullYear(), 0, 1);
         const joinStr = formatDate(safeJoinDate);
         const endStr = formatDate(row.movementDate);
         const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-        
-        // Ciptakan NIK Dummy: EX-Masuk-Keluar-RND (Misal: EX-20230124-20250119-045)
-        const dummyNIK = `EX-${joinStr}-${endStr}-${randomSuffix}`;
-        
+        const finalNIK = cleanEmpNo || `EX-${joinStr}-${endStr}-${randomSuffix}`;
+
         employee = await prisma.employee.create({
           data: {
-            employeeNo: dummyNIK,
-            fullName: row.employeeName,
-            joinDate: safeJoinDate, 
+            employeeNo: finalNIK,
+            fullName: cleanEmpName,
+            joinDate: safeJoinDate,
             endDate: row.movementDate,
-            status: 'INACTIVE', // Otomatis matikan
-            storeId: storeId,    // Kaitkan dengan toko terakhir
+            status: 'INACTIVE',
+            storeId: storeId,
             divisionId: divisionId,
             departmentId: departmentId
           }
         });
       } else {
-        // Jika karyawan sudah ada di Master Data, matikan statusnya!
-        await prisma.employee.update({
+        // ✅ OTOMATIS SET INACTIVE: Saat karyawan di Master masuk ke Bulk Turnover akhir bulan,
+        // langsung matikan statusnya dan warisi relasi jabatannya!
+        employee = await prisma.employee.update({
           where: { id: employee.id },
-          data: { 
+          data: {
             status: 'INACTIVE',
-            endDate: row.movementDate
+            endDate: row.movementDate,
+            storeId: employee.storeId || storeId,
+            divisionId: employee.divisionId || divisionId,
+            departmentId: employee.departmentId || departmentId
           }
         });
       }
 
-      // 3. === INSERT LOG MOVEMENT ===
-      await prisma.employeeMovement.create({
-        data: {
+      // 4. === SMART UPSERT LOG MOVEMENT (ANTI REDUNDAN!) ===
+      const existingMovement = await prisma.employeeMovement.findFirst({
+        where: {
           employeeId: employee.id,
-          movementType: row.movementType,
-          movementDate: row.movementDate,
-          reasonCategory: row.reason,
-          storeId: storeId,
-          divisionId: divisionId,
-          departmentId: departmentId
+          movementDate: row.movementDate
         }
       });
+
+      const movementPayload = {
+        employeeId: employee.id,
+        movementType: row.movementType,
+        movementDate: row.movementDate,
+        reasonCategory: row.reason,
+        storeId: storeId || employee.storeId,
+        divisionId: divisionId || employee.divisionId,
+        departmentId: departmentId || employee.departmentId
+      };
+
+      if (existingMovement) {
+        await prisma.employeeMovement.update({
+          where: { id: existingMovement.id },
+          data: movementPayload
+        });
+      } else {
+        await prisma.employeeMovement.create({
+          data: movementPayload
+        });
+      }
 
       successCount++;
     } catch (error) {
@@ -216,11 +248,13 @@ const getTurnoverMovements = async (startDate, endDate) => {
 
 const getExpiringContracts = async (targetDate) => {
   return await prisma.employee.findMany({
-    where: { 
-      endDate: { lte: targetDate, gt: new Date() }, 
-      status: 'ACTIVE' 
+    where: {
+      endDate: { lte: targetDate, gt: new Date() },
+      status: 'ACTIVE',
+      baseSalary: { not: null } // Pastikan hanya dari 41 karyawan aktif asli
     },
     include: { store: true, position: true },
+    orderBy: { endDate: 'asc' },
     take: 6
   });
 };

@@ -1,49 +1,86 @@
 const prisma = require('../../config/database');
 
+const normalizeText = (val) => {
+  if (!val) return null;
+  let clean = String(val).trim().replace(/\s+/g, ' ').toUpperCase();
+  if (clean === 'COMERCIAL BUSSINESS' || clean === 'COMERCIAL BUSINESS') {
+    clean = 'COMMERCIAL BUSINESS';
+  }
+  return clean;
+};
+
 const resolveRelations = async (row) => {
   let storeId = null, divisionId = null, departmentId = null;
 
-  // Resolve Store
-  if (row.storeName) {
-    const cleanStoreName = String(row.storeName).trim();
-    let store = await prisma.store.findFirst({ where: { storeName: { equals: cleanStoreName, mode: 'insensitive' } } });
-    if (!store) store = await prisma.store.create({ data: { storeName: cleanStoreName, storeCode: `STR-${Date.now()}` } });
+  // 1. Resolve Store (Selalu Uppercase agar tidak duplikat)
+  const cleanStoreName = normalizeText(row.storeName);
+  if (cleanStoreName && cleanStoreName !== 'TOTAL') {
+    let store = await prisma.store.findFirst({
+      where: { storeName: { equals: cleanStoreName, mode: 'insensitive' } }
+    });
+    if (!store) {
+      store = await prisma.store.create({
+        data: { storeName: cleanStoreName, storeCode: `STR-${Date.now()}-${Math.floor(Math.random() * 100)}` }
+      });
+    }
     storeId = store.id;
   }
 
-  // Resolve Divisi & Departemen
-  if (row.divisionName) {
-    let div = await prisma.division.findFirst({ where: { name: { equals: String(row.divisionName).trim(), mode: 'insensitive' } } });
-    if (!div) div = await prisma.division.create({ data: { name: row.divisionName, code: `DIV-${Date.now()}` } });
+  // 2. Resolve Divisi & Departemen
+  const cleanDivName = normalizeText(row.divisionName);
+  if (cleanDivName) {
+    let div = await prisma.division.findFirst({
+      where: { name: { equals: cleanDivName, mode: 'insensitive' } }
+    });
+    if (!div) {
+      div = await prisma.division.create({
+        data: { name: cleanDivName, code: `DIV-${Date.now()}-${Math.floor(Math.random() * 100)}` }
+      });
+    }
     divisionId = div.id;
   }
-  if (row.departmentName) {
-    let dept = await prisma.department.findFirst({ where: { name: { equals: String(row.departmentName).trim(), mode: 'insensitive' } } });
-    if (!dept) dept = await prisma.department.create({ data: { name: row.departmentName, code: `DPT-${Date.now()}`, divisionId } });
+
+  const cleanDeptName = normalizeText(row.departmentName);
+  if (cleanDeptName && divisionId) {
+    let dept = await prisma.department.findFirst({
+      where: { name: { equals: cleanDeptName, mode: 'insensitive' } }
+    });
+    if (!dept) {
+      dept = await prisma.department.create({
+        data: { name: cleanDeptName, code: `DPT-${Date.now()}-${Math.floor(Math.random() * 100)}`, divisionId }
+      });
+    }
     departmentId = dept.id;
   }
 
-  // Resolve Employee
+  // 3. Resolve Employee (Cari via NIK dulu, lalu fallback ke Nama)
   let employee = null;
-  const cleanName = String(row.employeeName).trim();
-  if (row.employeeNo) {
-    employee = await prisma.employee.findFirst({ where: { employeeNo: row.employeeNo } });
-  } else {
-    employee = await prisma.employee.findFirst({ where: { fullName: { equals: cleanName, mode: 'insensitive' } } });
+  const cleanName = String(row.employeeName || '').trim().toUpperCase();
+  const cleanEmpNo = row.employeeNo ? String(row.employeeNo).trim().toUpperCase() : null;
+
+  if (cleanEmpNo) {
+    employee = await prisma.employee.findFirst({
+      where: { employeeNo: { equals: cleanEmpNo, mode: 'insensitive' } }
+    });
+  }
+  if (!employee && cleanName) {
+    employee = await prisma.employee.findFirst({
+      where: { fullName: { equals: cleanName, mode: 'insensitive' } }
+    });
   }
 
-// Auto Create Employee
+  // Fallback Auto-Create (Tetap aman karena gender & baseSalary dibiarkan null sehingga tidak masuk Snapshot aktif)
   if (!employee) {
-    const dummyNIK = row.employeeNo || `EX-HO-${Date.now().toString().slice(-6)}`;
+    const dummyNIK = cleanEmpNo || `EX-CASE-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 100)}`;
     employee = await prisma.employee.create({
       data: {
         employeeNo: dummyNIK,
-        fullName: cleanName,
-        storeId, 
-        divisionId, 
+        fullName: cleanName || dummyNIK,
+        storeId,
+        divisionId,
         departmentId,
         status: 'ACTIVE',
-        joinDate: new Date() // <--- INI KUNCI UTAMANYA! Tambahkan baris ini.
+        joinDate: new Date()
       }
     });
   }
@@ -51,28 +88,64 @@ const resolveRelations = async (row) => {
   return { employeeId: employee.id, storeId, divisionId, departmentId };
 };
 
-// === 1. PROCESS BULK SP (TOKO & HO) ===
+// === 1. PROCESS BULK SP (TOKO & HO) - ANTI REDUNDAN + AUTO-INACTIVE JIKA PHK ===
 const processBulkSP = async (parsedData) => {
   let successCount = 0; let errorList = [];
 
   for (const row of parsedData) {
     try {
       const rel = await resolveRelations(row);
-      await prisma.disciplinaryCase.create({
-        data: {
+      const validStartDate = row.startDate || row.endDate || new Date();
+      const discType = row.disciplineName || 'Surat Peringatan';
+
+      // Cek apakah SP untuk karyawan ini pada tanggal & jenis SP yang sama sudah ada
+      const existingSP = await prisma.disciplinaryCase.findFirst({
+        where: {
           employeeId: rel.employeeId,
-          referenceNo: row.referenceNo || `SP-${Date.now().toString().slice(-5)}`,
-          disciplineType: row.disciplineName || 'Surat Peringatan',
-          category: row.category || 'Tata Tertib',
-          startDate: row.startDate,
-          endDate: row.endDate,
-          remark: row.remark,
-          divisionId: rel.divisionId,
-          departmentId: rel.departmentId,
-          storeId: rel.storeId,
-          status: 'AKTIF'
+          disciplineType: { equals: discType, mode: 'insensitive' },
+          startDate: validStartDate,
+          category: { not: 'Fraud & Audit' }
         }
       });
+
+      const spPayload = {
+        employeeId: rel.employeeId,
+        disciplineType: discType,
+        category: row.category || 'Tata Tertib',
+        startDate: validStartDate,
+        endDate: row.endDate,
+        remark: row.remark,
+        divisionId: rel.divisionId,
+        departmentId: rel.departmentId,
+        storeId: rel.storeId,
+        status: 'AKTIF'
+      };
+
+      if (existingSP) {
+        await prisma.disciplinaryCase.update({
+          where: { id: existingSP.id },
+          data: {
+            ...spPayload,
+            referenceNo: row.referenceNo || existingSP.referenceNo
+          }
+        });
+      } else {
+        await prisma.disciplinaryCase.create({
+          data: {
+            ...spPayload,
+            referenceNo: row.referenceNo || `SP-${Date.now().toString().slice(-5)}-${Math.floor(Math.random() * 100)}`
+          }
+        });
+      }
+
+      // ✅ EFEK DOMINO OTOMATIS: Jika sanksi di tabel SP adalah PHK, langsung nonaktifkan karyawan!
+      if (discType.toUpperCase().includes('PHK')) {
+        await prisma.employee.update({
+          where: { id: rel.employeeId },
+          data: { status: 'INACTIVE', endDate: validStartDate }
+        });
+      }
+
       successCount++;
     } catch (error) {
       errorList.push(`Gagal SP '${row.employeeName}': ${error.message}`);
@@ -81,44 +154,109 @@ const processBulkSP = async (parsedData) => {
   return { successCount, failCount: errorList.length, errors: errorList };
 };
 
-// === 2. PROCESS BULK FRAUD (KHUSUS AUDIT) ===
+// === 2. PROCESS BULK FRAUD (KHUSUS AUDIT) - ANTI REDUNDAN + AUTO-INACTIVE JIKA PHK ===
 const processBulkFraud = async (parsedData) => {
   let successCount = 0; let errorList = [];
+
+  // SAPU BERSIH OTOMATIS: Hapus baris Fraud lama yang caseDate-nya masih null (sisa import lama)
+  const oldNullFrauds = await prisma.fraudCase.findMany({
+    where: { caseDate: null },
+    select: { id: true, disciplineId: true }
+  });
+  if (oldNullFrauds.length > 0) {
+    const oldDiscIds = oldNullFrauds.map(f => f.disciplineId).filter(Boolean);
+    await prisma.fraudCase.deleteMany({ where: { caseDate: null } });
+    if (oldDiscIds.length > 0) {
+      await prisma.disciplinaryCase.deleteMany({ where: { id: { in: oldDiscIds } } });
+    }
+  }
 
   for (const row of parsedData) {
     try {
       const rel = await resolveRelations(row);
-      
-      // Buat SP-nya dulu (Induk Kasus)
-      const discipline = await prisma.disciplinaryCase.create({
-        data: {
+      const validCaseDate = row.startDate || row.auditDate || new Date();
+      const validAuditDate = row.auditDate || row.startDate || new Date();
+      const bakbVal = row.bakbAmount || 0;
+      const discQty = row.selisihQty || 0;
+      const discType = row.disciplineName || 'Tindak Lanjut Audit';
+
+      // 1. Cek apakah kasus Fraud ini sudah ada di DB berdasarkan Kunci Komposit Unik
+      const existingFraud = await prisma.fraudCase.findFirst({
+        where: {
           employeeId: rel.employeeId,
-          referenceNo: `FRD-${Date.now().toString().slice(-5)}`,
-          disciplineType: row.disciplineName || 'Tindak Lanjut Audit',
-          category: 'Fraud & Audit',
-          startDate: row.startDate,
-          remark: row.remark,
           storeId: rel.storeId,
-          status: 'AKTIF'
+          bakbAmount: bakbVal,
+          discrepancyQty: discQty,
+          caseDate: validCaseDate
         }
       });
 
-      // Buat Data Fraud-nya (Child/Detail Kasus)
-      await prisma.fraudCase.create({
-        data: {
-          employeeId: rel.employeeId,
-          storeId: rel.storeId,
-          disciplineId: discipline.id,
-          fraudCategory: row.fraudCategory || 'Selisih Barang',
-          remark: row.remark,
-          auditDate: row.auditDate || row.startDate,
-          discrepancyQty: row.selisihQty || 0,
-          bakbAmount: row.bakbAmount || 0,
-          salesTarget: row.salesTarget || 0,
-          salesActual: row.salesActual || 0,
-          status: 'OPEN'
+      if (existingFraud) {
+        if (existingFraud.disciplineId) {
+          await prisma.disciplinaryCase.update({
+            where: { id: existingFraud.disciplineId },
+            data: {
+              disciplineType: discType,
+              startDate: validCaseDate,
+              remark: row.remark,
+              storeId: rel.storeId
+            }
+          });
         }
-      });
+
+        await prisma.fraudCase.update({
+          where: { id: existingFraud.id },
+          data: {
+            fraudCategory: row.fraudCategory || 'Selisih Barang',
+            remark: row.remark,
+            caseDate: validCaseDate,
+            auditDate: validAuditDate,
+            discrepancyQty: discQty,
+            bakbAmount: bakbVal,
+            salesTarget: row.salesTarget || 0,
+            salesActual: row.salesActual || 0
+          }
+        });
+      } else {
+        const discipline = await prisma.disciplinaryCase.create({
+          data: {
+            employeeId: rel.employeeId,
+            referenceNo: `FRD-${Date.now().toString().slice(-5)}-${Math.floor(Math.random() * 100)}`,
+            disciplineType: discType,
+            category: 'Fraud & Audit',
+            startDate: validCaseDate,
+            remark: row.remark,
+            storeId: rel.storeId,
+            status: 'AKTIF'
+          }
+        });
+
+        await prisma.fraudCase.create({
+          data: {
+            employeeId: rel.employeeId,
+            storeId: rel.storeId,
+            disciplineId: discipline.id,
+            fraudCategory: row.fraudCategory || 'Selisih Barang',
+            remark: row.remark,
+            caseDate: validCaseDate,
+            auditDate: validAuditDate,
+            discrepancyQty: discQty,
+            bakbAmount: bakbVal,
+            salesTarget: row.salesTarget || 0,
+            salesActual: row.salesActual || 0,
+            status: 'OPEN'
+          }
+        });
+      }
+
+      // ✅ EFEK DOMINO OTOMATIS: Jika sanksi dari temuan Fraud adalah PHK, langsung nonaktifkan karyawan!
+      if (discType.toUpperCase().includes('PHK')) {
+        await prisma.employee.update({
+          where: { id: rel.employeeId },
+          data: { status: 'INACTIVE', endDate: validCaseDate }
+        });
+      }
+
       successCount++;
     } catch (error) {
       errorList.push(`Gagal Fraud '${row.employeeName}': ${error.message}`);
@@ -127,28 +265,47 @@ const processBulkFraud = async (parsedData) => {
   return { successCount, failCount: errorList.length, errors: errorList };
 };
 
+// === 3. PROCESS BULK BIPARTIT (KASUS INDUSTRIAL) - ANTI REDUNDAN (UPSERT) ===
 const processBulkBipartit = async (parsedData) => {
   let successCount = 0; let errorList = [];
 
   for (const row of parsedData) {
     try {
-      // Panggil resolver ajaib kita (sudah auto-create NIK dummy & resolve toko)
       const rel = await resolveRelations(row);
-      
-      // Pragmatis: Jika ada periode selesai berarti sudah Selesai, kalau kosong berarti Proses
-      const caseStatus = row.endDate ? 'SELESAI' : 'PROSES MEDIASI';
+      const ketUpper = String(row.keterangan || '').toUpperCase();
+      const isFinished = Boolean(row.endDate) || ketUpper.includes('SELESAI');
+      const caseStatus = isFinished ? 'SELESAI' : 'PROSES MEDIASI';
+      const validStartDate = row.startDate || row.endDate || new Date();
 
-      await prisma.industrialRelationCase.create({
-        data: {
+      // Cek apakah kasus Bipartit untuk karyawan & toko ini sudah ada
+      const existingCase = await prisma.industrialRelationCase.findFirst({
+        where: {
           employeeId: rel.employeeId,
           storeId: rel.storeId,
-          caseCategory: row.category || 'Bipartit',
-          description: row.keterangan,
-          startDate: row.startDate,
-          endDate: row.endDate,
-          status: caseStatus 
+          description: row.keterangan
         }
       });
+
+      const casePayload = {
+        employeeId: rel.employeeId,
+        storeId: rel.storeId,
+        caseCategory: row.category || 'Bipartit',
+        description: row.keterangan,
+        startDate: validStartDate,
+        endDate: row.endDate,
+        status: caseStatus
+      };
+
+      if (existingCase) {
+        await prisma.industrialRelationCase.update({
+          where: { id: existingCase.id },
+          data: casePayload
+        });
+      } else {
+        await prisma.industrialRelationCase.create({
+          data: casePayload
+        });
+      }
       successCount++;
     } catch (error) {
       errorList.push(`Gagal Bipartit '${row.employeeName}': ${error.message}`);
@@ -179,14 +336,12 @@ const deleteCase = async (id) => {
 };
 
 const getDashboardData = async () => {
-  // 1. HITUNG KPI (Key Performance Indicators)
   const totalSP = await prisma.disciplinaryCase.count({
     where: { status: 'AKTIF', category: { not: 'Fraud & Audit' } }
   });
-  
+
   const totalFraud = await prisma.fraudCase.count();
-  
-  // Hitung total nilai kerugian dari Fraud BAKB (Bisa ditambah dengan IR jika ada kolomnya nanti)
+
   const fraudAgg = await prisma.fraudCase.aggregate({
     _sum: { bakbAmount: true }
   });
@@ -197,13 +352,12 @@ const getDashboardData = async () => {
   const kpi = {
     totalSP,
     totalFraud,
-    totalLoss: Number(totalLoss), // Pastikan jadi angka biasa
+    totalLoss: Number(totalLoss),
     totalBipartit
   };
 
-  // 2. AMBIL RAW DATA UNTUK TABEL
   const spCases = await prisma.disciplinaryCase.findMany({
-    where: { category: { not: 'Fraud & Audit' } }, // Hanya SP biasa
+    where: { category: { not: 'Fraud & Audit' } },
     include: { employee: { select: { fullName: true, employeeNo: true } }, store: true },
     take: 20, orderBy: { startDate: 'desc' }
   });
@@ -218,25 +372,22 @@ const getDashboardData = async () => {
     take: 20, orderBy: { startDate: 'desc' }
   });
 
-  // 3. UNIFIED FORMAT (Menyamakan bentuk data agar pas dengan kolom UI)
   let tableData = [];
 
-  // Format Data SP
   spCases.forEach(sp => {
     tableData.push({
       caseNo: sp.referenceNo,
-      category: 'Disiplin / SP',
+      category: `Disiplin / SP (${sp.category || 'Tata Tertib'})`,
       employeeName: sp.employee?.fullName || 'N/A',
       unit: sp.store?.storeName || 'Kantor Pusat',
-      sanctionLevel: sp.disciplineType, // SP-1, SP-2, dll
+      sanctionLevel: sp.disciplineType,
       financialLoss: null,
-      remark: sp.remark || 'Pelanggaran Tata Tertib',
+      remark: sp.remark || `Pelanggaran ${sp.category || 'Tata Tertib'}`,
       date: sp.startDate,
       status: sp.status
     });
   });
 
-  // Format Data Fraud
   fraudCases.forEach(fr => {
     tableData.push({
       caseNo: fr.discipline?.referenceNo || 'FRD-XXXX',
@@ -246,31 +397,36 @@ const getDashboardData = async () => {
       sanctionLevel: fr.discipline?.disciplineType || 'Tindak Lanjut',
       financialLoss: Number(fr.bakbAmount),
       remark: fr.remark || fr.fraudCategory,
-      date: fr.auditDate,
+      date: fr.caseDate || fr.auditDate,
       status: fr.status
     });
   });
 
-  // Format Data Bipartit
-  irCases.forEach(ir => {
+  irCases.forEach((ir, idx) => {
     tableData.push({
-      caseNo: `BP-${Date.now().toString().slice(-4)}`, // Asumsi jika ada referenceNo
-      category: 'Bipartit / Disnaker',
+      caseNo: `BP-${String(idx + 1).padStart(4, '0')}`,
+      category: `Industrial (${ir.caseCategory || 'Bipartit'})`,
       employeeName: ir.employee?.fullName || 'N/A',
       unit: ir.store?.storeName || 'N/A',
-      sanctionLevel: 'Mediasi',
+      sanctionLevel: ir.caseCategory || 'Mediasi',
       financialLoss: ir.financialImpact ? Number(ir.financialImpact) : null,
       remark: ir.description || ir.caseCategory,
-      date: ir.startDate,
+      date: ir.startDate || ir.endDate,
       status: ir.status
     });
   });
 
-  // 4. URUTKAN GABUNGAN DATA BERDASARKAN TANGGAL TERBARU
-  tableData.sort((a, b) => new Date(b.date) - new Date(a.date));
+  tableData.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
-  return { kpi, tableData: tableData.slice(0, 50) }; // Kembalikan 50 data teratas
+  return { kpi, tableData: tableData.slice(0, 50) };
 };
 
-module.exports = { processBulkSP, processBulkFraud, getAllCases, getCaseById,
-                    deleteCase, getDashboardData, processBulkBipartit };
+module.exports = {
+  processBulkSP,
+  processBulkFraud,
+  getAllCases,
+  getCaseById,
+  deleteCase,
+  getDashboardData,
+  processBulkBipartit
+};

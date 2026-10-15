@@ -13,6 +13,7 @@ const monthlyReportingRoutes = require('./monthly-reporting/routes');
 const movemntRoutes = require('./employee-movement/routes');
 const disciplinaryRoutes = require ('./disciplinary/routes');
 const compilanceRoutes = require ('./compilance/routes');
+const dashboardRoutes = require ('./dashboard/routes')
 
 router.use('/auth', authRoutes);
 router.use('/administration', administrationRoutes);
@@ -26,5 +27,6 @@ router.use('/reporting-monthly', monthlyReportingRoutes);
 router.use('/movement', movemntRoutes);
 router.use('/disciplinary', disciplinaryRoutes);
 router.use('/compilance', compilanceRoutes);
+router.use('/dashboard', dashboardRoutes);
 
 module.exports = router;

@@ -8,7 +8,7 @@ http:
   url: http://localhost:5000/api/v1/administration/users
   body:
     type: json
-    data: ""
+    data: '{ "name": "Budi HR", "email": "budi@biensi.co.id", "password": "Budi123" }'
   auth: inherit
 
 settings:

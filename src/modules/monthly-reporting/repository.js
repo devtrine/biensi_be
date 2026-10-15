@@ -45,10 +45,29 @@ const getAllSales = async () => {
 };
 
 // --- 2. SNAPSHOT CLONING ENGINE ---
-const getActiveEmployeesForSnapshot = async () => {
+const getActiveEmployeesForSnapshot = async (scope = 'ALL') => {
+  const whereClause = {
+    status: 'ACTIVE',
+    birthDate: {not: null},
+    gender: { not: null },
+    baseSalary: { not: null, gt: 0 }
+  };
+
+  // 2. Pisahkan HO vs Toko secara otomatis sesuai kebutuhan pemanggil!
+  if (scope === 'STORE') {
+    whereClause.storeId = { not: null }; // Murni 19 karyawan Toko
+  } else if (scope === 'HQ') {
+    whereClause.storeId = null;          // Murni 22 karyawan HO
+  }
+
   return await prisma.employee.findMany({
-    where: { status: 'ACTIVE', storeId: { not: null } }, // Pastikan hanya anak toko
-    include: { position: true, store: true } // <-- Tambahkan store: true
+    where: whereClause,
+    include: {
+      division: true,
+      department: true,
+      position: true,
+      store: true
+    }
   });
 };
 
@@ -129,10 +148,19 @@ const getLabourCostsByPeriod = async (periodId) => {
   return await prisma.labourCost.findMany({ where: { periodId } });
 };
 
-// Ambil Absensi Agregat
-const getAttendanceByPeriod = async (periodId) => {
-  return await prisma.attendanceAggregateMonthly.findUnique({
-    where: { periodId: periodId }
+// Ambil Absensi Agregat (Aman untuk 1 parameter periodId maupun 2 parameter dengan scope)
+const getAttendanceByPeriod = async (periodId, scope = null) => {
+  const whereClause = { periodId };
+
+  // Jika nanti dikirim filter scope ('HQ' atau 'STORE'), saring sesuai scope
+  if (scope && scope.toUpperCase() !== 'CORPORATE') {
+    whereClause.scope = scope.toUpperCase().includes('HQ') ? 'HQ' : 'STORE';
+  }
+
+  // ✅ Ganti findUnique menjadi findFirst agar tidak error 500
+  return await prisma.attendanceAggregateMonthly.findFirst({
+    where: whereClause,
+    orderBy: { createdAt: 'desc' }
   });
 };
 

@@ -1,17 +1,40 @@
 const prisma = require('../../config/database');
 
+// Helper: Normalisasi teks & perbaiki typo divisi dari Excel
+const normalizeText = (val) => {
+  if (!val) return null;
+  let clean = String(val).trim().replace(/\s+/g, ' ').toUpperCase();
+  if (clean === 'COMERCIAL BUSSINESS' || clean === 'COMERCIAL BUSINESS') {
+    clean = 'COMMERCIAL BUSINESS';
+  }
+  return clean;
+};
+
+// Helper: Normalisasi Gender ("LAKI - LAKI" -> "LAKI-LAKI")
+const normalizeGender = (val) => {
+  if (!val) return null;
+  const clean = String(val).replace(/\s+/g, '').toUpperCase();
+  if (clean.includes('LAKI')) return 'LAKI-LAKI';
+  if (clean.includes('PEREMPUAN') || clean.includes('WANITA')) return 'PEREMPUAN';
+  return clean;
+};
+
 const findAllEmployees = async (searchQuery = '') => {
   return await prisma.employee.findMany({
-    where: searchQuery ? {
-      OR: [
-        { fullName: { contains: searchQuery, mode: 'insensitive' } },
-        { employeeNo: { contains: searchQuery, mode: 'insensitive' } }
-      ]
-    } : {},
+    where: {
+      // Saring agar karyawan bayangan (auto-create dari SP/Turnover yang gendernya null) tidak mengotori list
+      gender: { not: null },
+      ...(searchQuery ? {
+        OR: [
+          { fullName: { contains: searchQuery, mode: 'insensitive' } },
+          { employeeNo: { contains: searchQuery, mode: 'insensitive' } }
+        ]
+      } : {})
+    },
     include: {
       division: true,
       department: true,
-      unit: true,        // Relasi baru
+      unit: true,
       position: true,
       store: true
     },
@@ -21,7 +44,7 @@ const findAllEmployees = async (searchQuery = '') => {
 
 const findEmployeeById = async (id) => {
   return await prisma.employee.findUnique({
-    where: { id }, // UUID tidak perlu parseInt
+    where: { id },
     include: { division: true, department: true, unit: true, position: true, store: true }
   });
 };
@@ -31,22 +54,11 @@ const findEmployeeByNo = async (employeeNo) => {
 };
 
 const createEmployee = async (data) => {
-  // 1. Ekstrak semua relasi ID keluar dari objek data, sisanya masuk ke 'basicData'
-  const {
-    divisionId,
-    departmentId,
-    unitId,
-    positionId,
-    storeId,
-    ...basicData // Berisi employeeNo, fullName, birthDate, dll (tanpa Id relasi)
-  } = data;
+  const { divisionId, departmentId, unitId, positionId, storeId, ...basicData } = data;
 
-  // 2. Kirim ke Prisma dengan format 'connect' yang aman
   return await prisma.employee.create({
     data: {
-      ...basicData, // Data bersih dimasukkan
-
-      // Jika ID ada nilainya, kita buatkan objek connect-nya
+      ...basicData,
       ...(divisionId ? { division: { connect: { id: divisionId } } } : {}),
       ...(departmentId ? { department: { connect: { id: departmentId } } } : {}),
       ...(unitId ? { unit: { connect: { id: unitId } } } : {}),
@@ -57,21 +69,12 @@ const createEmployee = async (data) => {
 };
 
 const updateEmployee = async (id, data) => {
-  // Sama, ekstrak dulu sebelum update
-  const {
-    divisionId,
-    departmentId,
-    unitId,
-    positionId,
-    storeId,
-    ...basicData
-  } = data;
+  const { divisionId, departmentId, unitId, positionId, storeId, ...basicData } = data;
 
   return await prisma.employee.update({
     where: { id },
     data: {
       ...basicData,
-
       ...(divisionId !== undefined && {
         division: divisionId ? { connect: { id: divisionId } } : { disconnect: true }
       }),
@@ -94,91 +97,127 @@ const updateEmployee = async (id, data) => {
 const deleteEmployee = async (id) => {
   return await prisma.employee.delete({ where: { id } });
 };
+
 const processBulkImport = async (rawData) => {
   const results = { sukses: 0, gagal: 0, errorList: [] };
 
   for (const row of rawData) {
     try {
-      if (!row.employeeNo) continue;
+      // 1. Validasi NIK: Blokir baris null dan baris angka sampah (seperti '1' di bawah sheet Toko)
+      let empNo = String(row.employeeNo || '').trim().toUpperCase();
+      if (!empNo || !/^[A-Z]/.test(empNo)) continue;
 
-      // 1. Resolve Master Data (find or create) -> Tambahkan let storeId = null
+      const divName = normalizeText(row.divisionName);
+      const deptName = normalizeText(row.departmentName);
+      const unitName = normalizeText(row.unitName);
+      const posName = normalizeText(row.positionName);
+      const levelName = normalizeText(row.levelName) || 'STAFF';
+      const storeName = normalizeText(row.storeName);
+
+      // Fallback nama jika kosong (seperti baris pertama A15161718 di Excel HO)
+      const fullName = row.fullName && String(row.fullName).trim() !== ''
+        ? String(row.fullName).trim().toUpperCase()
+        : `KARYAWAN ${empNo}`;
+
+      // 2. Antisipasi NIK Ganda antara HO dan Toko (Contoh: A15161760 dipakai Bagus Prayudo & Riko)
+      const existingEmp = await prisma.employee.findUnique({ where: { employeeNo: empNo } });
+      if (existingEmp && existingEmp.fullName.toUpperCase() !== fullName) {
+        // Jika salah satunya orang Toko dan namanya beda, beri sufiks -STR agar tidak saling timpa
+        if (storeName) {
+          empNo = `${empNo}-STR`;
+        }
+      }
+
+      // 3. Resolve Master Data (Find or Create dengan nama yang sudah dinormalisasi)
       let divisionId = null, departmentId = null, unitId = null, positionId = null, storeId = null;
 
-      if (row.divisionName) {
-        let div = await prisma.division.findFirst({ where: { name: { equals: row.divisionName, mode: 'insensitive' } } });
-        if (!div) div = await prisma.division.create({ data: { name: row.divisionName, code: `DIV-${Date.now()}` } });
+      if (divName) {
+        let div = await prisma.division.findFirst({ where: { name: { equals: divName, mode: 'insensitive' } } });
+        if (!div) div = await prisma.division.create({ data: { name: divName, code: `DIV-${Date.now()}` } });
         divisionId = div.id;
       }
 
-      if (row.departmentName && divisionId) {
-        let dept = await prisma.department.findFirst({ where: { name: { equals: row.departmentName, mode: 'insensitive' } } });
-        if (!dept) dept = await prisma.department.create({ data: { name: row.departmentName, code: `DEPT-${Date.now()}`, divisionId } });
+      if (deptName && divisionId) {
+        let dept = await prisma.department.findFirst({ where: { name: { equals: deptName, mode: 'insensitive' } } });
+        if (!dept) dept = await prisma.department.create({ data: { name: deptName, code: `DEPT-${Date.now()}`, divisionId } });
         departmentId = dept.id;
       }
 
-      if (row.unitName && departmentId) {
-        let unit = await prisma.unit.findFirst({ where: { name: { equals: row.unitName, mode: 'insensitive' } } });
-        if (!unit) unit = await prisma.unit.create({ data: { name: row.unitName, code: `UNT-${Date.now()}`, departmentId } });
+      if (unitName && departmentId) {
+        let unit = await prisma.unit.findFirst({ where: { name: { equals: unitName, mode: 'insensitive' } } });
+        if (!unit) unit = await prisma.unit.create({ data: { name: unitName, code: `UNT-${Date.now()}`, departmentId } });
         unitId = unit.id;
       }
 
-      if (row.positionName) {
-        let pos = await prisma.position.findFirst({ where: { name: { equals: row.positionName, mode: 'insensitive' } } });
-        if (!pos) pos = await prisma.position.create({ data: { name: row.positionName, code: `POS-${Date.now()}`, employeeLevel: row.levelName || 'STAFF' } });
+      if (posName) {
+        let pos = await prisma.position.findFirst({ where: { name: { equals: posName, mode: 'insensitive' } } });
+        if (!pos) {
+          pos = await prisma.position.create({
+            data: { name: posName, code: `POS-${Date.now()}`, employeeLevel: levelName }
+          });
+        } else if (row.levelName && pos.employeeLevel !== levelName) {
+          // Pastikan level jabatan ter-update jika sebelumnya masih default
+          pos = await prisma.position.update({ where: { id: pos.id }, data: { employeeLevel: levelName } });
+        }
         positionId = pos.id;
       }
 
-      // --- TAMBAHAN BLOK STORE YANG BENAR ---
-      if (row.storeName) {
-        let store = await prisma.store.findFirst({ where: { storeName: { equals: row.storeName, mode: 'insensitive' } } });
-        if (!store) store = await prisma.store.create({ data: { storeName: row.storeName, storeCode: `STR-${Date.now()}` } });
+      if (storeName && storeName !== 'TOTAL') {
+        let store = await prisma.store.findFirst({ where: { storeName: { equals: storeName, mode: 'insensitive' } } });
+        if (!store) store = await prisma.store.create({ data: { storeName: storeName, storeCode: `STR-${Date.now()}` } });
         storeId = store.id;
       }
-      // --------------------------------------
 
-      // 2. Siapkan data karyawan untuk Prisma
-      const employeeData = {
-        employeeNo: row.employeeNo,
-        fullName: row.fullName,
-        gender: row.gender,
-        birthDate: row.birthDate,
-        educationLevel: row.educationLevel,
-        employmentType: row.employmentType,
-        joinDate: row.joinDate,
-        endDate: row.endDate,
-        bpjsKetenagakerjaan: row.bpjsKetenagakerjaan,
-        bpjsKesehatan: row.bpjsKesehatan,
-        baseSalary: (() => {
-          let rawValue = row.baseSalary;
+      // 4. Parsing Gaji yang Aman terhadap Desimal ("4500000.0" -> 4500000)
+      const parsedSalary = (() => {
+        const rawValue = row.baseSalary;
+        if (rawValue === undefined || rawValue === null || rawValue === '') return null;
+        if (typeof rawValue === 'number') return rawValue;
+        const cleanStr = String(rawValue).replace(/[^0-9.-]+/g, '');
+        const num = parseFloat(cleanStr);
+        return isNaN(num) ? null : Math.round(num);
+      })();
 
-          if (rawValue === undefined || rawValue === null || rawValue === '') return null;
+      // 5. Validasi Tanggal Habis Kontrak (Abaikan jika status TETAP atau tahun di bawah 2020 seperti 1957-05-20)
+      const empType = normalizeText(row.employmentType);
+      let validEndDate = row.endDate ? new Date(row.endDate) : null;
+      if (empType === 'TETAP' || (validEndDate && validEndDate.getFullYear() < 2020)) {
+        validEndDate = null;
+      }
 
-          if (typeof rawValue === 'number') return rawValue;
-
-          if (typeof rawValue === 'string') {
-            const cleanDigits = rawValue.replace(/\D/g, ''); // Hapus koma, spasi, huruf
-            const finalNumber = parseInt(cleanDigits, 10);
-            return isNaN(finalNumber) ? null : finalNumber;
-          }
-
-          return null;
-        })(),
-
-        // Relasi (menggunakan sintaks connect yang aman)
-        ...(divisionId ? { division: { connect: { id: divisionId } } } : {}),
-        ...(departmentId ? { department: { connect: { id: departmentId } } } : {}),
-        ...(unitId ? { unit: { connect: { id: unitId } } } : {}),
-        ...(positionId ? { position: { connect: { id: positionId } } } : {}),
-
-        // --- SUNTIKKAN STORE ID KE SINI ---
-        ...(storeId ? { store: { connect: { id: storeId } } } : {})
+      const basePayload = {
+        employeeNo: empNo,
+        fullName: fullName,
+        gender: normalizeGender(row.gender),
+        birthDate: row.birthDate ? new Date(row.birthDate) : null,
+        educationLevel: normalizeText(row.educationLevel),
+        employmentType: empType,
+        joinDate: row.joinDate ? new Date(row.joinDate) : new Date(),
+        endDate: validEndDate,
+        bpjsKetenagakerjaan: Boolean(row.bpjsKetenagakerjaan),
+        bpjsKesehatan: Boolean(row.bpjsKesehatan),
+        baseSalary: parsedSalary
       };
 
-      // 3. Eksekusi Upsert
+      // 6. Eksekusi Upsert (Pastikan relasi bisa di-disconnect jika karyawan HO tidak punya storeId)
       await prisma.employee.upsert({
-        where: { employeeNo: employeeData.employeeNo },
-        update: employeeData,
-        create: employeeData
+        where: { employeeNo: empNo },
+        create: {
+          ...basePayload,
+          ...(divisionId ? { division: { connect: { id: divisionId } } } : {}),
+          ...(departmentId ? { department: { connect: { id: departmentId } } } : {}),
+          ...(unitId ? { unit: { connect: { id: unitId } } } : {}),
+          ...(positionId ? { position: { connect: { id: positionId } } } : {}),
+          ...(storeId ? { store: { connect: { id: storeId } } } : {})
+        },
+        update: {
+          ...basePayload,
+          division: divisionId ? { connect: { id: divisionId } } : { disconnect: true },
+          department: departmentId ? { connect: { id: departmentId } } : { disconnect: true },
+          unit: unitId ? { connect: { id: unitId } } : { disconnect: true },
+          position: positionId ? { connect: { id: positionId } } : { disconnect: true },
+          store: storeId ? { connect: { id: storeId } } : { disconnect: true }
+        }
       });
 
       results.sukses++;

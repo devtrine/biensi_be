@@ -124,29 +124,44 @@ const generateSnapshot = async (periodId) => {
 // 2. GANTI FUNGSI IMPORT ATTENDANCE & LABOUR COST
 const importAttendanceAggregate = async (rawData) => {
   let successCount = 0;
+  let currentScope = 'HQ'; // Default tabel bagian atas adalah HQ
 
   for (const row of rawData) {
-    if (!row.BULAN) continue; // Jika tidak ada keterangan bulan, lewati
-    
+    // 1. Deteksi jika melewati baris Header Kedua di tengah sheet (Tabel Store)
+    const rowValues = Object.values(row).map(v => String(v || '').toUpperCase());
+    if (rowValues.some(v => v.includes('JUMLAH KARYWAN STORE') || v.includes('JUMLAH KARYAWAN STORE'))) {
+      currentScope = 'STORE';
+      continue; // Lewati baris header ini, lanjut ke baris data Store di bawahnya
+    }
+
+    if (!row.BULAN || String(row.BULAN).toUpperCase() === 'BULAN') continue;
+
     const parsedDate = parseMonthYear(row.BULAN);
     if (!parsedDate) continue;
 
     const periodId = await getOrCreatePeriodId(parsedDate.year, parsedDate.month);
 
+    // 2. Gunakan row.scope jika sudah diset dari parser, atau pakai currentScope hasil deteksi
+    const activeScope = row.scope || currentScope;
+
+    // 3. Normalisasi attendanceRate (di Excel nilainya desimal 0.8229 -> bulatkan 2 desimal)
+    const rawRate = parseFloat(row.attendanceRate ?? row['%TASE KEHADIRAN'] ?? 0);
+
     const data = {
-      totalEmployees: row.totalEmployees || 0,
-      sickCount: row.sickCount || 0,
-      permissionCount: row.permissionCount || 0,
-      annualLeaveCount: row.annualLeaveCount || 0,
-      absentCount: row.absentCount || 0,
-      workingDays: row.workingDays || 0,
-      attendanceRate: row.attendanceRate || null
+      totalEmployees: parseInt(row.totalEmployees ?? row['JUMLAH KARYWAN HEAD OFFICE'] ?? row['JUMLAH KARYWAN STORE'] ?? 0),
+      sickCount: parseInt(row.sickCount ?? row['JML KARYAWAN SAKIT'] ?? 0),
+      permissionCount: parseInt(row.permissionCount ?? row['JML KARYAWAN IJIN'] ?? 0),
+      annualLeaveCount: parseInt(row.annualLeaveCount ?? row['CUTI TAHUNAN'] ?? 0),
+      absentCount: parseInt(row.absentCount ?? row['ALPHA'] ?? 0),
+      workingDays: parseInt(row.workingDays ?? row['HARI KERJA'] ?? 22) || 22,
+      attendanceRate: isNaN(rawRate) ? null : Number(rawRate.toFixed(2))
     };
 
-    await repository.upsertAttendanceAggregate(periodId, data);
+    // ✅ PERBAIKAN: Kirim 3 parameter (periodId, activeScope, data) sesuai urutan di repository!
+    await repository.upsertAttendanceAggregate(periodId, activeScope, data);
     successCount++;
   }
-  
+
   return { imported: successCount };
 };
 
@@ -349,64 +364,112 @@ const getDashboardSummary = async (periodId) => {
 };
 
 const getStorePerformanceDashboard = async (periodId) => {
-  // 1. Manfaatkan fungsi sakti dari repository Anda!
   const salesData = await repository.getSalesByPeriod(periodId);
-  const employees = await repository.getActiveEmployeesForSnapshot();
+  const allEmployees = await repository.getActiveEmployeesForSnapshot();
+  const employees = allEmployees.filter(emp => emp.storeId !== null);
 
-  // 2. Inisialisasi Variabel Penampung
   const today = new Date();
   let totalNetSales = 0;
   let totalTargetSales = 0;
-  
+
+  // Helper penentu Region & StoreType otomatis jika di tabel Store masih null
+  const inferRegion = (storeName, dbRegion) => {
+    if (dbRegion && ['BARAT', 'TIMUR'].includes(dbRegion.toUpperCase())) return dbRegion.toUpperCase();
+    const name = String(storeName || '').toUpperCase();
+    const timurKeywords = ['SEMARANG', 'SMG', 'SOLO', 'SIDOARJO', 'JOMBANG', 'TUBAN', 'SALATIGA', 'CENDRAWASIH', 'MKS', 'MAKASSAR'];
+    return timurKeywords.some(k => name.includes(k)) ? 'TIMUR' : 'BARAT';
+  };
+
+  const inferStoreType = (storeName, dbType) => {
+    if (dbType) return dbType.toUpperCase();
+    const name = String(storeName || '').toUpperCase();
+    if (name.startsWith('FS ')) return 'FAMILY STORE';
+    if (name.startsWith('SHOWROOM')) return 'SHOWROOM';
+    return 'COUNTER';
+  };
+
   const regionalData = {
-    BARAT: { storeCount: 0, headcount: 0, totalAge: 0, totalTenure: 0, sales: 0, target: 0 },
-    TIMUR: { storeCount: 0, headcount: 0, totalAge: 0, totalTenure: 0, sales: 0, target: 0 }
+    BARAT: { storeCount: 0, headcount: 0, totalAge: 0, validAgeCount: 0, totalTenure: 0, validTenureCount: 0, sales: 0, target: 0 },
+    TIMUR: { storeCount: 0, headcount: 0, totalAge: 0, validAgeCount: 0, totalTenure: 0, validTenureCount: 0, sales: 0, target: 0 }
   };
 
   let managerTenureSum = 0; let managerCount = 0;
   let frontlineTenureSum = 0; let frontlineCount = 0;
   const leaderboard = [];
-  const storeEmployeeMap = {}; 
+  const storeEmployeeMap = {};
 
   const calculateYears = (dateStr) => {
-    if (!dateStr) return 0;
-    return (today - new Date(dateStr)) / (1000 * 60 * 60 * 24 * 365.25);
+    if (!dateStr) return null;
+    const years = (today - new Date(dateStr)) / (1000 * 60 * 60 * 24 * 365.25);
+    return years > 0 ? years : null;
   };
 
-  // 3. Mapping Karyawan & Demografi
+  // 3. Mapping Karyawan Toko & Demografi (Dengan Fallback Region agar semua 19 orang masuk BARAT/TIMUR)
   employees.forEach(emp => {
-    const region = emp.store?.region?.toUpperCase() || 'LAINNYA';
+    const storeName = emp.store?.storeName || '';
+    const region = inferRegion(storeName, emp.store?.region);
     const age = calculateYears(emp.birthDate);
     const tenure = calculateYears(emp.joinDate);
-    const posName = emp.position?.name?.toUpperCase() || 'UNKNOWN';
+    const posName = (emp.position?.name || emp.position?.employeeLevel || 'UNKNOWN').toUpperCase();
     const storeId = emp.storeId;
+    const realSalary = parseFloat(emp.baseSalary || 0);
 
-    if (!storeEmployeeMap[storeId]) storeEmployeeMap[storeId] = { managers: 0, staffs: 0, managerTenure: 0 };
-    
+    if (!storeEmployeeMap[storeId]) {
+      storeEmployeeMap[storeId] = { managers: 0, staffs: 0, managerTenure: 0, totalSalary: 0 };
+    }
+
+    storeEmployeeMap[storeId].totalSalary += (realSalary > 0 ? realSalary : 5000000);
+
     if (posName.includes('MANAGER') || posName.includes('LEADER')) {
       storeEmployeeMap[storeId].managers++;
-      storeEmployeeMap[storeId].managerTenure = Math.max(storeEmployeeMap[storeId].managerTenure, tenure);
-      managerCount++;
-      managerTenureSum += tenure;
+      if (tenure !== null) {
+        storeEmployeeMap[storeId].managerTenure = Math.max(storeEmployeeMap[storeId].managerTenure, tenure);
+        managerCount++;
+        managerTenureSum += tenure;
+      }
     } else {
       storeEmployeeMap[storeId].staffs++;
-      frontlineCount++;
-      frontlineTenureSum += tenure;
+      if (tenure !== null) {
+        frontlineCount++;
+        frontlineTenureSum += tenure;
+      }
     }
 
     if (regionalData[region]) {
       regionalData[region].headcount++;
-      regionalData[region].totalAge += age;
-      regionalData[region].totalTenure += tenure;
+      if (age !== null) {
+        regionalData[region].totalAge += age;
+        regionalData[region].validAgeCount++;
+      }
+      if (tenure !== null) {
+        regionalData[region].totalTenure += tenure;
+        regionalData[region].validTenureCount++;
+      }
     }
   });
 
-  // 4. Mapping Penjualan & Leaderboard
-  salesData.forEach(sale => {
-    const region = sale.store?.region?.toUpperCase() || 'LAINNYA';
+  // 4. Mapping Penjualan & Leaderboard (Dengan Dummy Target sesuai arahan PM)
+  salesData.forEach((sale, idx) => {
+    const storeName = sale.store?.storeName || '';
+    const cleanName = storeName.toUpperCase().trim();
+
+    // Blokir baris rekap "TOTAL" dan data dummy testing "STORE SUDIRMAN"
+    if (cleanName === 'TOTAL' || cleanName === 'STORE SUDIRMAN') return;
+
+    const region = inferRegion(storeName, sale.store?.region);
+    const storeType = inferStoreType(storeName, sale.store?.storeType);
     const actual = parseFloat(sale.netSales || 0);
-    const target = parseFloat(sale.targetSales || 0);
-    
+
+    // ✅ DUMMY TARGET GENERATOR (Sesuai arahan PM):
+    // Jika targetSales di DB masih null/0, buat dummy target proporsional (antara 88% s/d 112% dari actual)
+    // supaya persentase achievement di Leaderboard & Regional hidup dan bervariasi!
+    let target = parseFloat(sale.targetSales || 0);
+    if (!target && actual > 0) {
+      const multipliers = [0.90, 0.95, 1.02, 0.88, 1.05, 0.92, 1.08, 0.97, 1.12, 0.94];
+      const factor = multipliers[(sale.storeId || idx) % multipliers.length];
+      target = Math.round(actual * factor);
+    }
+
     totalNetSales += actual;
     totalTargetSales += target;
 
@@ -416,25 +479,26 @@ const getStorePerformanceDashboard = async (periodId) => {
       regionalData[region].target += target;
     }
 
-    const storeEmpStats = storeEmployeeMap[sale.storeId] || { managers: 0, staffs: 0, managerTenure: 0 };
+    const storeEmpStats = storeEmployeeMap[sale.storeId] || { managers: 0, staffs: 0, managerTenure: 0, totalSalary: 0 };
     const totalStaff = storeEmpStats.managers + storeEmpStats.staffs;
     const achPercent = target > 0 ? (actual / target) * 100 : 0;
-    
-    // Anda bahkan bisa memanggil getSnapshotsByPeriod nanti jika ingin biaya riil
-    const estimatedLabourCost = totalStaff * 5000000; 
+
+    // ✅ Tambahan sesuai gambar metrik: Komposisi Labour Cost per Store vs Sales
+    const storeLabourRatio = actual > 0 ? ((storeEmpStats.totalSalary / actual) * 100).toFixed(2) + '%' : '0%';
 
     leaderboard.push({
-      storeName: sale.store?.storeName,
-      region: sale.store?.region,
-      storeType: sale.store?.storeType,
+      storeName: storeName,
+      region: region,
+      storeType: storeType,
       headcount: totalStaff,
       spgRatio: `1 : ${storeEmpStats.managers > 0 ? (storeEmpStats.staffs / storeEmpStats.managers).toFixed(1) : storeEmpStats.staffs}`,
       leaderTenure: storeEmpStats.managerTenure.toFixed(1),
       netSales: actual,
       targetSales: target,
       achievement: achPercent.toFixed(1) + '%',
-      labourCost: estimatedLabourCost,
-      revenuePerFte: totalStaff > 0 ? actual / totalStaff : 0
+      labourCost: storeEmpStats.totalSalary,
+      labourCostRatio: storeLabourRatio,
+      revenuePerFte: totalStaff > 0 ? Math.round(actual / totalStaff) : 0
     });
   });
 
@@ -442,11 +506,14 @@ const getStorePerformanceDashboard = async (periodId) => {
   const formatRegion = (data) => ({
     storeCount: data.storeCount,
     headcount: data.headcount,
-    avgAge: data.headcount ? (data.totalAge / data.headcount).toFixed(1) : 0,
-    avgTenure: data.headcount ? (data.totalTenure / data.headcount).toFixed(1) : 0,
+    avgAge: data.validAgeCount > 0 ? (data.totalAge / data.validAgeCount).toFixed(1) : '0.0',
+    avgTenure: data.validTenureCount > 0 ? (data.totalTenure / data.validTenureCount).toFixed(1) : '0.0',
     achievement: data.target > 0 ? ((data.sales / data.target) * 100).toFixed(1) + '%' : '0%',
-    revenuePerFte: data.headcount ? (data.sales / data.headcount) : 0
+    revenuePerFte: data.headcount > 0 ? Math.round(data.sales / data.headcount) : 0
   });
+
+  const mgrAvg = managerCount > 0 ? (managerTenureSum / managerCount) : 0;
+  const frontAvg = frontlineCount > 0 ? (frontlineTenureSum / frontlineCount) : 0;
 
   return {
     success: true,
@@ -455,16 +522,16 @@ const getStorePerformanceDashboard = async (periodId) => {
         totalSales: totalNetSales,
         targetAchievement: totalTargetSales > 0 ? ((totalNetSales / totalTargetSales) * 100).toFixed(1) + '%' : '0%',
         retailAssociates: employees.length,
-        revenuePerFte: employees.length > 0 ? totalNetSales / employees.length : 0
+        revenuePerFte: employees.length > 0 ? Math.round(totalNetSales / employees.length) : 0
       },
       regionalComparison: {
         BARAT: formatRegion(regionalData.BARAT),
         TIMUR: formatRegion(regionalData.TIMUR)
       },
       tenureGap: {
-        seniorManagerAvg: managerCount ? (managerTenureSum / managerCount).toFixed(1) : 0,
-        frontlineAvg: frontlineCount ? (frontlineTenureSum / frontlineCount).toFixed(1) : 0,
-        gapYears: ((managerCount ? managerTenureSum/managerCount : 0) - (frontlineCount ? frontlineTenureSum/frontlineCount : 0)).toFixed(1)
+        seniorManagerAvg: mgrAvg.toFixed(1),
+        frontlineAvg: frontAvg.toFixed(1),
+        gapYears: Math.max(0, mgrAvg - frontAvg).toFixed(1)
       },
       storeLeaderboard: leaderboard.sort((a, b) => parseFloat(b.achievement) - parseFloat(a.achievement))
     }
@@ -474,7 +541,7 @@ const getStorePerformanceDashboard = async (periodId) => {
 //Universal Import 
 const importAttendanceUniversal = async (raw2DArray) => {
   let successCount = 0;
-  let currentScope = 'HQ'; // Default awal
+  let currentScope = 'HQ';
   let currentHeaders = [];
 
   // 1. Looping setiap baris dari atas ke bawah

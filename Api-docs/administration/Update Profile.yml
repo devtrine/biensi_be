@@ -6,6 +6,20 @@ info:
 http:
   method: PUT
   url: http://localhost:5000/api/v1/administration/profile
+  body:
+    type: multipart-form
+    data:
+      - name: name
+        type: text
+        value: "Super Admin HR "
+      - name: photo
+        type: file
+        value:
+          - C:\Users\ASUS\OneDrive\Gambar\Panjul.jpg
+        contentType: image/jpeg
+      - name: phoneNumber
+        type: text
+        value: "08213784652"
   auth: inherit
 
 settings:
