@@ -1,19 +1,186 @@
 const repository = require('./repository');
 const prisma = require('../../config/database');
 
+// Helper untuk mengelompokkan populasi karyawan (dipakai oleh Corporate, HQ, dan Store untuk Matriks #1-#21 & #28-#39)
+const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0) => {
+  const refDate = new Date(Date.UTC(periodYear, periodMonth, 0));
+  let totalAge = 0; let validAgeCount = 0;
+  let totalTenure = 0; let validTenureCount = 0;
+  let budgetCost = 0; let actualCost = 0;
+
+  const byGender = { LAKI_LAKI: 0, PEREMPUAN: 0 };
+  const byAgeBracket = { under21: 0, age21To25: 0, age26To30: 0, age31To40: 0, over40: 0 };
+  const byTenureBracket = { under1Year: 0, tenure1To3Years: 0, tenure3To5Years: 0, over5Years: 0 };
+
+  // Metrik #11 - #17 (7 Level Jabatan Baku)
+  const byLevelStandard = {
+    bodPlus: 0,          // #11 BOD+
+    manager: 0,          // #12 Manager
+    associateManager: 0, // #13 Associate Manager
+    lead: 0,             // #14 Lead / Head
+    associateLead: 0,    // #15 Associate Lead / Supervisor
+    teamLeader: 0,       // #16 Team Leader (Store Leader)
+    staffCrew: 0         // #17 Staff / Crew / Cashier / SA
+  };
+
+  // Metrik #18 - #21 (4 Tipe Kontrak Baku)
+  const byEmploymentStandard = {
+    pkwtt: 0,      // #18 Fulltime (TETAP)
+    pkwt: 0,       // #19 Contract (KONTRAK)
+    partTime: 0,   // #20 Part time (FREELANCE)
+    internship: 0  // #21 Internship (PERBANTUAN / MAGANG)
+  };
+
+  // Metrik #4, #9, #10 (Usia & Masa Kerja berdasarkan Kelompok Jabatan: Staff vs Leader vs Management)
+  const posGroupAcc = {
+    staff: { count: 0, ageSum: 0, ageCnt: 0, tenSum: 0, tenCnt: 0 },
+    leader: { count: 0, ageSum: 0, ageCnt: 0, tenSum: 0, tenCnt: 0 },
+    management: { count: 0, ageSum: 0, ageCnt: 0, tenSum: 0, tenCnt: 0 }
+  };
+
+  empList.forEach(item => {
+    const emp = item.employee || item;
+    if (!emp) return;
+
+    const bud = parseFloat(item.budgetLabourCost || emp.baseSalary || 0);
+    const act = parseFloat(item.actualLabourCost || bud || 0);
+    budgetCost += bud;
+    actualCost += act;
+
+    // Gender (#6)
+    if (String(emp.gender || '').toUpperCase().includes('LAKI')) byGender.LAKI_LAKI++;
+    else byGender.PEREMPUAN++;
+
+    // Usia (#7)
+    let ageVal = null;
+    if (emp.birthDate) {
+      ageVal = periodYear - new Date(emp.birthDate).getFullYear();
+      if (ageVal > 0) {
+        totalAge += ageVal;
+        validAgeCount++;
+        if (ageVal < 21) byAgeBracket.under21++;
+        else if (ageVal <= 25) byAgeBracket.age21To25++;
+        else if (ageVal <= 30) byAgeBracket.age26To30++;
+        else if (ageVal <= 40) byAgeBracket.age31To40++;
+        else byAgeBracket.over40++;
+      }
+    }
+
+    // Masa Kerja (#8)
+    let tenureVal = null;
+    if (emp.joinDate) {
+      tenureVal = Math.max(0, (refDate - new Date(emp.joinDate)) / (1000 * 60 * 60 * 24 * 365.25));
+      totalTenure += tenureVal;
+      validTenureCount++;
+      if (tenureVal < 1) byTenureBracket.under1Year++;
+      else if (tenureVal <= 3) byTenureBracket.tenure1To3Years++;
+      else if (tenureVal <= 5) byTenureBracket.tenure3To5Years++;
+      else byTenureBracket.over5Years++;
+    }
+
+    // Klasifikasi Level Jabatan (#11 - #17 & #4, #9, #10)
+    const lvlStr = `${emp.position?.employeeLevel || ''} ${emp.position?.name || ''}`.toUpperCase();
+    let groupKey = 'staff';
+
+    if (lvlStr.includes('BOD') || lvlStr.includes('DIRECTOR') || lvlStr.includes('DIREKTUR')) {
+      byLevelStandard.bodPlus++;
+      groupKey = 'management';
+    } else if (lvlStr.includes('ASSOCIATE MANAGER') || lvlStr.includes('ASST MANAGER')) {
+      byLevelStandard.associateManager++;
+      groupKey = 'management';
+    } else if (lvlStr.includes('MANAGER')) {
+      byLevelStandard.manager++;
+      groupKey = 'management';
+    } else if (lvlStr.includes('ASST HEAD') || lvlStr.includes('ASSOCIATE LEAD') || lvlStr.includes('SUPERVISOR') || lvlStr.includes('SPV')) {
+      byLevelStandard.associateLead++;
+      groupKey = 'leader';
+    } else if (lvlStr.includes('HEAD') || lvlStr.includes('KA.')) {
+      byLevelStandard.lead++;
+      groupKey = 'leader';
+    } else if (lvlStr.includes('LEADER')) {
+      byLevelStandard.teamLeader++;
+      groupKey = 'leader';
+    } else {
+      byLevelStandard.staffCrew++;
+      groupKey = 'staff';
+    }
+
+    posGroupAcc[groupKey].count++;
+    if (ageVal !== null && ageVal > 0) {
+      posGroupAcc[groupKey].ageSum += ageVal;
+      posGroupAcc[groupKey].ageCnt++;
+    }
+    if (tenureVal !== null) {
+      posGroupAcc[groupKey].tenSum += tenureVal;
+      posGroupAcc[groupKey].tenCnt++;
+    }
+
+    // Klasifikasi Tipe Kontrak (#18 - #21)
+    const empTypeStr = String(emp.employmentType || '').toUpperCase();
+    if (empTypeStr.includes('TETAP') || empTypeStr.includes('PKWTT')) byEmploymentStandard.pkwtt++;
+    else if (empTypeStr.includes('KONTRAK') || empTypeStr.includes('PKWT')) byEmploymentStandard.pkwt++;
+    else if (empTypeStr.includes('FREELANCE') || empTypeStr.includes('PART')) byEmploymentStandard.partTime++;
+    else byEmploymentStandard.internship++;
+  });
+
+  const headcount = empList.length;
+  const leaderTotal = posGroupAcc.leader.count + posGroupAcc.management.count;
+
+  return {
+    headcount,
+    avgAge: validAgeCount ? Number((totalAge / validAgeCount).toFixed(1)) : 0,
+    avgTenure: validTenureCount ? Number((totalTenure / validTenureCount).toFixed(1)) : 0,
+    leaderToStaffRatio: `1 : ${leaderTotal > 0 ? (posGroupAcc.staff.count / leaderTotal).toFixed(1) : posGroupAcc.staff.count}`,
+    byGender,
+    byAgeBracket,
+    byTenureBracket,
+    byLevelStandard,
+    byEmploymentStandard,
+    byPositionGroup: {
+      staff: {
+        count: posGroupAcc.staff.count,
+        avgAge: posGroupAcc.staff.ageCnt ? Number((posGroupAcc.staff.ageSum / posGroupAcc.staff.ageCnt).toFixed(1)) : 0,
+        avgTenure: posGroupAcc.staff.tenCnt ? Number((posGroupAcc.staff.tenSum / posGroupAcc.staff.tenCnt).toFixed(1)) : 0
+      },
+      leader: {
+        count: posGroupAcc.leader.count,
+        avgAge: posGroupAcc.leader.ageCnt ? Number((posGroupAcc.leader.ageSum / posGroupAcc.leader.ageCnt).toFixed(1)) : 0,
+        avgTenure: posGroupAcc.leader.tenCnt ? Number((posGroupAcc.leader.tenSum / posGroupAcc.leader.tenCnt).toFixed(1)) : 0
+      },
+      management: {
+        count: posGroupAcc.management.count,
+        avgAge: posGroupAcc.management.ageCnt ? Number((posGroupAcc.management.ageSum / posGroupAcc.management.ageCnt).toFixed(1)) : 0,
+        avgTenure: posGroupAcc.management.tenCnt ? Number((posGroupAcc.management.tenSum / posGroupAcc.management.tenCnt).toFixed(1)) : 0
+      }
+    },
+    productivity: {
+      budgetCost,
+      actualCost,
+      labourCostRatio: totalSales > 0 ? ((actualCost / totalSales) * 100).toFixed(2) + '%' : '0%',
+      revenuePerFte: headcount > 0 ? Math.round(totalSales / headcount) : 0,
+      payrollMultiplier: actualCost > 0 ? Number((totalSales / actualCost).toFixed(2)) : 0,
+      avgEmploymentCost: headcount > 0 ? Math.round(actualCost / headcount) : 0
+    }
+  };
+};
+
 // ============================================================================
-// 1. FUNGSI SAKTI 1: SUMMARY DASHBOARD (MENDUKUNG POCKET TREAT SCOPE FILTER!)
+// 1. FUNGSI SAKTI 1: SUMMARY DASHBOARD (CHARTS + METRIKS #1-#21 & #28-#43)
 // ============================================================================
 const getDashboardSummary = async (periodId, scope = 'Corporate') => {
   const period = await prisma.reportingPeriod.findUnique({ where: { id: periodId } });
   if (!period) throw new Error('Periode tidak ditemukan');
 
-  // 1. Ambil Snapshots, Attendance, & Sales (Otomatis fallback ke bulan terakhir yang ada datanya di tahun tsb)
-  const rawSnapshots = await repository.getMonthlySnapshots(periodId, period.year);
-  const attendance = await repository.getAttendanceByPeriod(periodId, scope, period.year);
-  const sales = await repository.getSalesByPeriod(periodId, period.year);
+  const [rawSnapshots, attendance, attendanceByScope, sales] = await Promise.all([
+    repository.getMonthlySnapshots(periodId, period.year),
+    repository.getAttendanceByPeriod(periodId, scope, period.year),
+    repository.getAttendanceBothScopes(periodId, period.year),
+    repository.getSalesByPeriod(periodId, period.year)
+  ]);
 
-  // 2. POCKET TREAT: Filter Snapshot berdasarkan Scope ('Corporate', 'HQ', atau 'Store')
+  const totalSales = sales.reduce((sum, s) => sum + parseFloat(s.netSales || 0), 0);
+
+  // Filter Snapshot sesuai Scope untuk Charts
   const normScope = String(scope || 'CORPORATE').toUpperCase();
   const snapshots = rawSnapshots.filter(snap => {
     if (!snap.employee) return false;
@@ -23,10 +190,21 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
     if (normScope.includes('STORE') || normScope.includes('RITEL') || normScope.includes('TOKO')) {
       return snap.employee.storeId !== null;
     }
-    return true; // Corporate (Semua 41 karyawan: 22 HQ + 19 Store)
+    return true;
   });
 
-  // 3. Proses Demografi & Grouping Biaya
+  // Ringkasan 3 Kolom Sekaligus (Corporate, HQ, Store) untuk Tabel Matriks KPI
+  const hqSnapshots = rawSnapshots.filter(s => s.employee && s.employee.storeId === null);
+  const storeSnapshots = rawSnapshots.filter(s => s.employee && s.employee.storeId !== null);
+  const activeScopeStats = summarizeEmployeeGroup(snapshots, period.year, period.month, totalSales);
+
+  const scopeBreakdown = {
+    corporate: summarizeEmployeeGroup(rawSnapshots, period.year, period.month, totalSales),
+    hq: summarizeEmployeeGroup(hqSnapshots, period.year, period.month, totalSales),
+    store: summarizeEmployeeGroup(storeSnapshots, period.year, period.month, totalSales)
+  };
+
+  // Proses Demografi & Grouping Biaya (Format Asli untuk Visual Charts)
   let totalAge = 0;
   let validAgeCount = 0;
 
@@ -34,7 +212,12 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
     byDivision: {},
     byDepartment: {},
     byGender: {},
-    byEmploymentType: {}
+    byEmploymentType: {},
+    // [TAMBAHAN METRIKS & CHARTS]:
+    byEmployeeLevel: activeScopeStats.byLevelStandard,
+    byAgeBracket: activeScopeStats.byAgeBracket,
+    byTenureBracket: activeScopeStats.byTenureBracket,
+    byPositionGroup: activeScopeStats.byPositionGroup
   };
 
   const costDistribution = {
@@ -99,7 +282,6 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
   });
 
   const avgAge = validAgeCount ? (totalAge / validAgeCount).toFixed(1) : 0;
-  const totalSales = sales.reduce((sum, s) => sum + parseFloat(s.netSales || 0), 0);
 
   const formatCostAgg = (aggObj) => {
     return Object.keys(aggObj).map(key => {
@@ -137,16 +319,23 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
     },
     demographics: {
       totalHeadcount: snapshots.length,
+      hqHeadcount: hqSnapshots.length,
+      storeHeadcount: storeSnapshots.length,
       avgAgeAtPeriod: parseFloat(avgAge),
+      avgTenureYears: activeScopeStats.avgTenure,
+      leaderToStaffRatio: activeScopeStats.leaderToStaffRatio,
       distribution
     },
     attendance: attendance || null,
+    attendanceByScope, // [TAMBAHAN METRIKS #40-#43]: { hq, store }
     productivity: {
       totalBudgetCost: totalBudget,
       totalActualCost: totalActual,
       totalSales: totalSales,
       labourCostRatio: totalSales > 0 ? ((totalActual / totalSales) * 100).toFixed(2) + '%' : '0%',
       revenuePerFte: snapshots.length > 0 ? (totalSales / snapshots.length).toFixed(2) : '0.00',
+      payrollMultiplier: totalActual > 0 ? Number((totalSales / totalActual).toFixed(2)) : 0,
+      avgEmploymentCost: snapshots.length > 0 ? Math.round(totalActual / snapshots.length) : 0,
       costByDivision: formatCostAgg(costDistribution.byDivision),
       costByDepartment: formatCostAgg(costDistribution.byDepartment).sort((a, b) => b.actualCost - a.actualCost),
       costByEmploymentType: formatCostAgg(costDistribution.byEmploymentType)
@@ -154,12 +343,13 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
     retention: {
       totalResigned: 0,
       turnoverRate: '0%'
-    }
+    },
+    scopeBreakdown // [TAMBAHAN METRIKS #1-#21 & #28-#39]: Berisi { corporate, hq, store } siap pakai!
   };
 };
 
 // ============================================================================
-// 2. FUNGSI SAKTI 2: STORE PERFORMANCE (SUDAH TERMASUK DUMMY TARGET & REGION)
+// 2. FUNGSI SAKTI 2: STORE PERFORMANCE (DITAMBAH METRIK #39 BY STORE TYPE)
 // ============================================================================
 const getStorePerformanceDashboard = async (periodId, year = null) => {
   const salesData = await repository.getSalesByPeriod(periodId, year);
@@ -187,6 +377,13 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
   const regionalData = {
     BARAT: { storeCount: 0, headcount: 0, totalAge: 0, validAgeCount: 0, totalTenure: 0, validTenureCount: 0, sales: 0, target: 0 },
     TIMUR: { storeCount: 0, headcount: 0, totalAge: 0, validAgeCount: 0, totalTenure: 0, validTenureCount: 0, sales: 0, target: 0 }
+  };
+
+  // [TAMBAHAN METRIK #39]: Akumulator Labour Cost vs Sales per Tipe Toko (Family Store, Showroom, Counter)
+  const storeTypeAcc = {
+    'FAMILY STORE': { sales: 0, cost: 0 },
+    'SHOWROOM': { sales: 0, cost: 0 },
+    'COUNTER': { sales: 0, cost: 0 }
   };
 
   let managerTenureSum = 0; let managerCount = 0;
@@ -273,6 +470,11 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
     const achPercent = target > 0 ? (actual / target) * 100 : 0;
     const storeLabourRatio = actual > 0 ? ((storeEmpStats.totalSalary / actual) * 100).toFixed(2) + '%' : '0.00%';
 
+    if (storeTypeAcc[storeType]) {
+      storeTypeAcc[storeType].sales += actual;
+      storeTypeAcc[storeType].cost += storeEmpStats.totalSalary;
+    }
+
     leaderboard.push({
       storeName: storeName,
       region: region,
@@ -314,6 +516,15 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
         BARAT: formatRegion(regionalData.BARAT),
         TIMUR: formatRegion(regionalData.TIMUR)
       },
+      // [TAMBAHAN METRIK #39]: Komposisi labour cost per store vs sales
+      costRatioByStoreType: {
+        familyStore: storeTypeAcc['FAMILY STORE'].sales > 0
+          ? ((storeTypeAcc['FAMILY STORE'].cost / storeTypeAcc['FAMILY STORE'].sales) * 100).toFixed(2) + '%' : '0.00%',
+        showroom: storeTypeAcc['SHOWROOM'].sales > 0
+          ? ((storeTypeAcc['SHOWROOM'].cost / storeTypeAcc['SHOWROOM'].sales) * 100).toFixed(2) + '%' : '0.00%',
+        counter: storeTypeAcc['COUNTER'].sales > 0
+          ? ((storeTypeAcc['COUNTER'].cost / storeTypeAcc['COUNTER'].sales) * 100).toFixed(2) + '%' : '0.00%'
+      },
       tenureGap: {
         seniorManagerAvg: mgrAvg.toFixed(1),
         frontlineAvg: frontAvg.toFixed(1),
@@ -325,7 +536,7 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
 };
 
 // ============================================================================
-// 3. FUNGSI SAKTI 3: TURNOVER (MENDUKUNG FILTER SCOPE CORPORATE / HQ / STORE)
+// 3. FUNGSI SAKTI 3: TURNOVER (DITAMBAH BREAKDOWN CORPORATE / HQ / STORE #5 & #22)
 // ============================================================================
 const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
   const numYear = parseInt(year, 10) || new Date().getFullYear();
@@ -334,7 +545,10 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
   const startDateYTD = new Date(Date.UTC(numYear, 0, 1, 0, 0, 0));
   const endDate = new Date(Date.UTC(numYear, numMonth, 0, 23, 59, 59, 999));
 
-  const movements = await repository.getTurnoverMovements(startDateYTD, endDate, scope);
+  const [movements, allMovementsForMatrix] = await Promise.all([
+    repository.getTurnoverMovements(startDateYTD, endDate, scope),
+    repository.getTurnoverMovements(startDateYTD, endDate, 'Corporate')
+  ]);
 
   let voluntaryCount = 0; let involuntaryCount = 0; let contractEndCount = 0;
   let currentMonthCount = movements.filter(m => (new Date(m.movementDate).getUTCMonth() + 1) === numMonth).length;
@@ -394,7 +608,10 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
 
   const targetDate30Days = new Date();
   targetDate30Days.setDate(targetDate30Days.getDate() + 30);
-  const expiringContracts = await repository.getExpiringContracts(targetDate30Days, scope);
+  const [expiringContracts, allExpiringForMatrix] = await Promise.all([
+    repository.getExpiringContracts(targetDate30Days, scope),
+    repository.getExpiringContracts(targetDate30Days, 'Corporate')
+  ]);
 
   const orderedTrend = monthNames
     .filter(m => monthlyTrendMap[m] !== undefined)
@@ -403,6 +620,20 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
       voluntary: monthlyTrendMap[m].voluntary,
       nonVoluntary: monthlyTrendMap[m].nonVoluntary
     }));
+
+  // [TAMBAHAN METRIK #5]: Breakdown Voluntary vs Non-Voluntary untuk Corporate, HQ, dan Store
+  const calcSplit = (arr) => {
+    const total = arr.length;
+    const vol = arr.filter(m => m.movementType === 'VOLUNTARY').length;
+    const nonVol = total - vol;
+    return {
+      total,
+      voluntary: vol,
+      nonVoluntary: nonVol,
+      voluntaryPct: total > 0 ? ((vol / total) * 100).toFixed(1) + '%' : '0%',
+      nonVoluntaryPct: total > 0 ? ((nonVol / total) * 100).toFixed(1) + '%' : '0%'
+    };
+  };
 
   return {
     success: true,
@@ -416,7 +647,13 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
           annualTurnoverRate: '9.2%'
         },
         monthlyTrend: orderedTrend,
-        positionSpeed: formatRank(positionCountMap).slice(0, 5)
+        positionSpeed: formatRank(positionCountMap).slice(0, 5),
+        // [TAMBAHAN METRIK #5]:
+        scopeBreakdown: {
+          corporate: calcSplit(allMovementsForMatrix),
+          hq: calcSplit(allMovementsForMatrix.filter(m => m.storeId === null)),
+          store: calcSplit(allMovementsForMatrix.filter(m => m.storeId !== null))
+        }
       },
       deepDive: {
         voluntaryTopReasons: formatRank(voluntaryReasons).slice(0, 3),
@@ -425,6 +662,12 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
       },
       contractWatch: {
         expiringCount: expiringContracts.length,
+        // [TAMBAHAN METRIK #22]: Pemisahan jumlah kontrak habis <= 30 hari untuk Corporate, HQ, Store
+        expiringByScope: {
+          corporate: allExpiringForMatrix.length,
+          hq: allExpiringForMatrix.filter(e => !e.storeId).length,
+          store: allExpiringForMatrix.filter(e => e.storeId).length
+        },
         expiringList: expiringContracts.map(emp => {
           const sisaHari = Math.ceil((new Date(emp.endDate) - new Date()) / (1000 * 60 * 60 * 24));
           return {
@@ -449,20 +692,19 @@ const getMainExecutiveDashboard = async (filters = {}) => {
   const month = parseInt(filters.month, 10) || new Date().getMonth() + 1;
   const scope = filters.scope || 'Corporate';
 
-  // Cari periodId dari database (otomatis fallback ke bulan terakhir di tahun tsb jika bulan belum ada)
   const period = await repository.getPeriodByDate(year, month);
   if (!period) {
     throw new Error(`Data periode untuk ${month}-${year} belum tersedia di sistem.`);
   }
 
-  // Jalankan 3 fungsi secara paralel (meneruskan scope dan year untuk fallback cerdas)
-  const [summaryData, storeData, turnoverData] = await Promise.all([
+  // Jalankan secara paralel (termasuk menarik ringkasan SP & Hubungan Industrial untuk Metrik #23, #26, #27)
+  const [summaryData, storeData, turnoverData, industrialAndSp] = await Promise.all([
     getDashboardSummary(period.id, scope),
     getStorePerformanceDashboard(period.id, year),
-    getTurnoverDashboard(year, month, scope)
+    getTurnoverDashboard(year, month, scope),
+    repository.getIndustrialAndSpSummary(year)
   ]);
 
-  // Sinkronkan juga kartu retention di dalam summaryData dari hasil turnoverData
   const monthlyResigned = turnoverData.data.overview.kpi.monthlyTurnover;
   const activeHeadcount = summaryData.demographics.totalHeadcount;
   summaryData.retention = {
@@ -476,7 +718,8 @@ const getMainExecutiveDashboard = async (filters = {}) => {
     filters: { year, month, scope },
     summary: summaryData,
     storePerformance: storeData.data,
-    turnoverAndRetention: turnoverData.data
+    turnoverAndRetention: turnoverData.data,
+    industrialAndSp // <--- Tambahan untuk Kartu Kanan Bawah & Metrik #23, #26, #27
   };
 };
 

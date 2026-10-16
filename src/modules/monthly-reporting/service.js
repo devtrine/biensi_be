@@ -546,20 +546,20 @@ const importAttendanceUniversal = async (raw2DArray) => {
 
   // 1. Looping setiap baris dari atas ke bawah
   for (let i = 0; i < raw2DArray.length; i++) {
-    const row = raw2DArray[i];
-    
+    const row = raw2DArray[i] || [];
+
     // Gabungkan teks dalam baris untuk mempermudah deteksi
     const rowString = row.join(' ').toUpperCase();
 
-    // 2. Deteksi Baris Header & Transisi Scope
-    if (rowString.includes('BULAN')) {
-      // Bersihkan dan simpan susunan kolom header saat ini
-      currentHeaders = row.map(h => typeof h === 'string' ? h.toUpperCase().replace(/\s+/g, ' ').trim() : h);
-      
-      // Deteksi identitas tabel berdasarkan teks di row tersebut
+    // 2. Deteksi Baris Header & Transisi Scope (HQ di tabel atas -> STORE di tabel bawah)
+    if (rowString.includes('BULAN') && (rowString.includes('SAKIT') || rowString.includes('ALPHA') || rowString.includes('HARI KERJA'))) {
+      currentHeaders = row.map(h =>
+        typeof h === 'string' ? h.toUpperCase().replace(/\s+/g, ' ').trim() : h
+      );
+
       if (rowString.includes('HEAD OFFICE') || rowString.includes('HO')) {
         currentScope = 'HQ';
-      } else if (rowString.includes('STORE')) {
+      } else if (rowString.includes('STORE') || rowString.includes('TOKO')) {
         currentScope = 'STORE';
       }
       continue; // Skip baris header ini, lanjut ke baris datanya
@@ -573,38 +573,54 @@ const importAttendanceUniversal = async (raw2DArray) => {
       if (header) rowData[header] = row[index];
     });
 
-    // Skip baris kosong atau baris pemisah antar tabel
-    if (!rowData['BULAN']) continue; 
+    // Skip baris kosong, baris TOTAL/RATA-RATA, atau baris pemisah antar tabel
+    const rawBulan = String(rowData['BULAN'] || '').trim();
+    if (!rawBulan || rawBulan.toUpperCase().includes('TOTAL') || rawBulan.toUpperCase().includes('RATA')) {
+      continue;
+    }
 
-    // 4. Parsing Periode
+    // 4. Parsing Periode Bulan & Tahun (Belum insert ke DB!)
     const parsedDate = parseMonthYear(rowData['BULAN']);
     if (!parsedDate) continue;
 
-    const periodId = await getOrCreatePeriodId(parsedDate.year, parsedDate.month);
-
-    // 5. Ambil Data Dinamis (Menangani penamaan kolom Jumlah Karyawan yang berubah-ubah)
-    const totalEmpKey = Object.keys(rowData).find(key => 
-      key.includes('KARY') && (key.includes('HEAD OFFICE') || key.includes('STORE') || key.includes('HO'))
+    // 5. Ambil Data Dinamis (Aman terhadap variasi typo header Excel seperti KARYWAN vs KARYAWAN, IJIN vs IZIN)
+    const totalEmpKey = Object.keys(rowData).find(key =>
+      key.includes('KARY') && (key.includes('HEAD OFFICE') || key.includes('STORE') || key.includes('HO') || key.includes('JUMLAH'))
     );
-    
+
+    const rawRate = parseFloat(
+      String(rowData['%TASE KEHADIRAN'] ?? rowData['% KEHADIRAN'] ?? 0).replace(',', '.')
+    );
+
     const data = {
-      totalEmployees: parseInt(rowData[totalEmpKey] || rowData['JUMLAH KARYWAN'] || 0),
-      sickCount: parseInt(rowData['JML KARYAWAN SAKIT'] || 0),
-      permissionCount: parseInt(rowData['JML KARYAWAN IJIN'] || 0),
-      annualLeaveCount: parseInt(rowData['CUTI TAHUNAN'] || 0),
-      absentCount: parseInt(rowData['ALPHA'] || 0),
-      workingDays: parseInt(rowData['HARI KERJA'] || 22), 
-      attendanceRate: parseFloat(rowData['%TASE KEHADIRAN'] || 0)
+      totalEmployees: parseInt(rowData[totalEmpKey] || rowData['JUMLAH KARYWAN'] || rowData['JUMLAH KARYAWAN'] || 0, 10) || 0,
+      sickCount: parseInt(rowData['JML KARYAWAN SAKIT'] || 0, 10) || 0,
+      permissionCount: parseInt(rowData['JML KARYAWAN IJIN'] || rowData['JML KARYAWAN IZIN'] || 0, 10) || 0,
+      annualLeaveCount: parseInt(rowData['CUTI TAHUNAN'] || 0, 10) || 0,
+      absentCount: parseInt(rowData['ALPHA'] || rowData['ALPA'] || 0, 10) || 0,
+      workingDays: parseInt(rowData['HARI KERJA'] || 22, 10) || 22,
+      attendanceRate: isNaN(rawRate) ? 0 : Number(rawRate.toFixed(4))
     };
 
-    // Abaikan jika data isinya nol semua (mencegah error dari sel kosong)
-    if (data.totalEmployees === 0 && data.sickCount === 0 && data.absentCount === 0) continue;
+    // ✅ PENGAMAN UTAMA UPLOAD BULANAN:
+    // Jangan proses dan JANGAN buat ReportingPeriod jika bulan ini di Excel masih kosong (bulan masa depan)
+    const hasActivity = (
+      data.sickCount > 0 ||
+      data.permissionCount > 0 ||
+      data.annualLeaveCount > 0 ||
+      data.absentCount > 0 ||
+      data.attendanceRate > 0
+    );
+    if (data.totalEmployees === 0 || !hasActivity) continue;
 
-    // 6. Simpan ke Database menyertakan scope!
+    // 6. Buat/Ambil periodId HANYA untuk bulan yang datanya benar-benar sudah terisi!
+    const periodId = await getOrCreatePeriodId(parsedDate.year, parsedDate.month);
+
+    // 7. Upsert ke Database (Jika bulan lama -> UPDATE, jika bulan baru -> CREATE)
     await repository.upsertAttendanceAggregate(periodId, currentScope, data);
     successCount++;
   }
-  
+
   return { imported: successCount };
 };
 

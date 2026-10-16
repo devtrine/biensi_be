@@ -88,6 +88,29 @@ const resolveRelations = async (row) => {
   return { employeeId: employee.id, storeId, divisionId, departmentId };
 };
 
+const findOrCreatePeriod = async (year, month, monthName) => {
+  const numYear = parseInt(year, 10);
+  const numMonth = parseInt(month, 10);
+
+  let period = await prisma.reportingPeriod.findFirst({
+    where: { year: numYear, month: numMonth }
+  });
+
+  if (!period) {
+    period = await prisma.reportingPeriod.create({
+      data: {
+        year: numYear,
+        month: numMonth,
+        periodName: `${monthName || 'Bulan ' + numMonth} ${numYear}`,
+        periodStart: new Date(Date.UTC(numYear, numMonth - 1, 1)),
+        periodEnd: new Date(Date.UTC(numYear, numMonth, 0, 23, 59, 59))
+      }
+    });
+  }
+
+  return period;
+};
+
 // === 1. PROCESS BULK SP (TOKO & HO) - ANTI REDUNDAN + AUTO-INACTIVE JIKA PHK ===
 const processBulkSP = async (parsedData) => {
   let successCount = 0; let errorList = [];
@@ -314,6 +337,84 @@ const processBulkBipartit = async (parsedData) => {
   return { successCount, failCount: errorList.length, errors: errorList };
 };
 
+// === UPSERT REKAP SP TOKO BULANAN (ANTI-REDUNDAN) ===
+const upsertSpTokoAggregate = async (periodId, data) => {
+  return await prisma.spAggregateMonthly.upsert({
+    where: {
+      periodId_scope: {
+        periodId: periodId,
+        scope: 'STORE'
+      }
+    },
+    update: {
+      totalEmployees: data.totalEmployees,
+      tataTertibCount: data.tataTertibCount,
+      nonTataTertibCount: data.nonTataTertibCount,
+      totalSpIssued: data.totalSpIssued,
+      breakdown: data.breakdown
+    },
+    create: {
+      periodId: periodId,
+      scope: 'STORE',
+      totalEmployees: data.totalEmployees,
+      tataTertibCount: data.tataTertibCount,
+      nonTataTertibCount: data.nonTataTertibCount,
+      totalSpIssued: data.totalSpIssued,
+      breakdown: data.breakdown
+    }
+  });
+};
+
+// === GET REKAP SP TOKO PER TAHUN (2024, 2025, 2026) ===
+const getSpTokoAggregateByYear = async (year) => {
+  // Jika ?year=all, ambil semua tahun (2024, 2025, 2026)
+  const isAllYears = String(year || '').toLowerCase() === 'all';
+  const numYear = parseInt(year, 10) || new Date().getFullYear();
+
+  const whereClause = { scope: 'STORE' };
+  if (!isAllYears) {
+    whereClause.period = { year: numYear };
+  }
+
+  const records = await prisma.spAggregateMonthly.findMany({
+    where: whereClause,
+    include: { period: true },
+    orderBy: [
+      { period: { year: 'asc' } },
+      { period: { month: 'asc' } }
+    ]
+  });
+
+  const summary = records.reduce(
+    (acc, r) => {
+      acc.totalSpIssued += r.totalSpIssued;
+      acc.tataTertibCount += r.tataTertibCount;
+      acc.nonTataTertibCount += r.nonTataTertibCount;
+      return acc;
+    },
+    { totalSpIssued: 0, tataTertibCount: 0, nonTataTertibCount: 0 }
+  );
+
+  return {
+    year: isAllYears ? 'ALL' : numYear,
+    scope: 'STORE',
+    summary,
+    monthlyData: records.map(r => ({
+      year: r.period.year,
+      month: r.period.month,
+      periodName: r.period.periodName,
+      totalEmployees: r.totalEmployees,
+      tataTertibCount: r.tataTertibCount,
+      nonTataTertibCount: r.nonTataTertibCount,
+      totalSpIssued: r.totalSpIssued,
+      spPercentage: r.totalEmployees > 0
+        ? Number(((r.totalSpIssued / r.totalEmployees) * 100).toFixed(2))
+        : 0,
+      breakdown: r.breakdown
+    }))
+  };
+};
+
 // === CRUD WRAPPERS ===
 const getAllCases = async (filters = {}) => {
   return await prisma.disciplinaryCase.findMany({
@@ -422,11 +523,7 @@ const getDashboardData = async () => {
 };
 
 module.exports = {
-  processBulkSP,
-  processBulkFraud,
-  getAllCases,
-  getCaseById,
-  deleteCase,
-  getDashboardData,
-  processBulkBipartit
+  processBulkSP, processBulkFraud, getAllCases,
+  getCaseById, deleteCase, getDashboardData, findOrCreatePeriod,
+  processBulkBipartit, upsertSpTokoAggregate, getSpTokoAggregateByYear
 };

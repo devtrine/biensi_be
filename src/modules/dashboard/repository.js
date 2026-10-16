@@ -44,8 +44,6 @@ const getMonthlySnapshots = async (periodId, year) => {
     include: includeRel
   });
 
-  // Fallback cerdas: Jika di periodId (misal bulan 10) snapshot masih kosong,
-  // ambil snapshot dari bulan terakhir di tahun yang sama yang sudah memiliki isi (misal bulan 9)
   if (snapshots.length === 0 && year) {
     const latestPeriodWithSnap = await prisma.reportingPeriod.findFirst({
       where: {
@@ -63,7 +61,6 @@ const getMonthlySnapshots = async (periodId, year) => {
     }
   }
 
-  // Saring hanya karyawan valid (blokir sisa snapshot hantu jika masih ada di periode lain)
   return snapshots.filter(s => s.employee && s.employee.gender !== null && s.employee.baseSalary !== null);
 };
 
@@ -90,7 +87,6 @@ const getAttendanceByPeriod = async (periodId, scope = 'Corporate', year = null)
     orderBy: { createdAt: 'desc' }
   });
 
-  // Fallback jika di bulan yang diminta belum ada absensi, ambil bulan terakhir di tahun yang sama
   if (!attendance && year) {
     const latestAttPeriod = await prisma.reportingPeriod.findFirst({
       where: {
@@ -114,19 +110,17 @@ const getAttendanceByPeriod = async (periodId, scope = 'Corporate', year = null)
 
 // 5. Ambil Sales per Periode (Dengan Auto-Fallback ke bulan terakhir yang punya sales valid di tahun tersebut, misal Juli 2026)
 const getSalesByPeriod = async (periodId, year = null) => {
-  let sales = await prisma.salesMonthly.findMany({
+  const sales = await prisma.salesMonthly.findMany({
     where: { periodId },
     include: { store: true },
     orderBy: { netSales: 'desc' }
   });
 
-  // Saring baris rekap "TOTAL" & toko dummy testing
   let validSales = sales.filter(s => {
     const name = String(s.store?.storeName || '').toUpperCase().trim();
     return name !== 'TOTAL' && name !== 'STORE SUDIRMAN';
   });
 
-  // Jika di bulan 9/10 sales masih kosong, otomatis ambil dari bulan terakhir yang ada transaksi di tahun tersebut (Juli 2026)
   if (validSales.length === 0 && year) {
     const periodsInYear = await prisma.reportingPeriod.findMany({
       where: { year: parseInt(year, 10) },
@@ -213,14 +207,119 @@ const getExpiringContracts = async (targetDate, scope = 'Corporate') => {
   });
 };
 
+// ============================================================================
+// [TAMBAHAN KHUSUS METRIKS #40-#43 & #23, #26, #27]
+// ============================================================================
+
+// 9. Ambil Absensi HQ dan STORE Sekaligus (Untuk Metriks #40-#43 & Grafik Perbandingan)
+const getAttendanceBothScopes = async (periodId, year = null) => {
+  const [hq, store] = await Promise.all([
+    getAttendanceByPeriod(periodId, 'HQ', year),
+    getAttendanceByPeriod(periodId, 'STORE', year)
+  ]);
+  return { hq, store };
+};
+
+// 10. Ambil Ringkasan SP Toko (SpAggregateMonthly), SP HO, Bipartit (#26), & Kontrak Lewat Jatuh Tempo (#23)
+const getIndustrialAndSpSummary = async (year) => {
+  const numYear = parseInt(year, 10) || new Date().getFullYear();
+  const startOfYear = new Date(Date.UTC(numYear, 0, 1, 0, 0, 0));
+  const endOfYear = new Date(Date.UTC(numYear, 11, 31, 23, 59, 59));
+
+  const [spStoreRecords, spHoCases, irCases, overdueContracts] = await Promise.all([
+    prisma.spAggregateMonthly.findMany({
+      where: { scope: 'STORE', period: { year: numYear } }
+    }),
+    prisma.disciplinaryCase.findMany({
+      where: {
+        storeId: null,
+        category: { not: 'Fraud & Audit' },
+        startDate: { gte: startOfYear, lte: endOfYear }
+      }
+    }),
+    prisma.industrialRelationCase.findMany({
+      include: { employee: true }
+    }),
+    prisma.employee.findMany({
+      where: {
+        status: 'ACTIVE',
+        baseSalary: { not: null },
+        endDate: { lt: new Date() }
+      },
+      select: { id: true, storeId: true }
+    })
+  ]);
+
+  const storeSp = spStoreRecords.reduce(
+    (acc, r) => {
+      acc.total += r.totalSpIssued;
+      acc.tataTertib += r.tataTertibCount;
+      acc.nonTataTertib += r.nonTataTertibCount;
+      const brk = r.breakdown || {};
+      if (brk.bySpLevel) {
+        acc.sp1 += (brk.bySpLevel.sp1 || 0);
+        acc.sp2 += (brk.bySpLevel.sp2 || 0);
+        acc.sp3 += (brk.bySpLevel.sp3 || 0);
+      }
+      if (brk.byRegion) {
+        acc.barat += (brk.byRegion.barat || 0);
+        acc.timur += (brk.byRegion.timur || 0);
+      }
+      return acc;
+    },
+    { total: 0, tataTertib: 0, nonTataTertib: 0, sp1: 0, sp2: 0, sp3: 0, barat: 0, timur: 0 }
+  );
+
+  let hqTataTertib = 0;
+  let hqNonTataTertib = 0;
+  spHoCases.forEach(c => {
+    if (String(c.category || '').toUpperCase().includes('NON')) hqNonTataTertib++;
+    else hqTataTertib++;
+  });
+
+  const countDisputes = (list) => {
+    const res = { total: list.length, selesai: 0, bipartit: 0, mediasi: 0, phi: 0 };
+    list.forEach(c => {
+      const st = String(c.status || '').toUpperCase();
+      if (st.includes('CLOSE') || st.includes('SELESAI')) res.selesai++;
+      else if (st.includes('MEDIASI') || st.includes('DISNAKER')) res.mediasi++;
+      else if (st.includes('PHI')) res.phi++;
+      else res.bipartit++;
+    });
+    return res;
+  };
+
+  return {
+    totalSpIssued: storeSp.total + spHoCases.length, // Metrik #27 Corporate
+    storeSp,                                         // Metrik #27 Store & Kartu SP
+    hqSp: {                                          // Metrik #27 HQ
+      total: spHoCases.length,
+      tataTertib: hqTataTertib,
+      nonTataTertib: hqNonTataTertib
+    },
+    disputes: {                                      // Metrik #26 (Corporate, HQ, Store)
+      corporate: countDisputes(irCases),
+      hq: countDisputes(irCases.filter(c => !c.employee?.storeId)),
+      store: countDisputes(irCases.filter(c => c.employee?.storeId))
+    },
+    overdueContracts: {                              // Metrik #23 (Kontrak lewat jatuh tempo)
+      corporate: overdueContracts.length,
+      hq: overdueContracts.filter(e => !e.storeId).length,
+      store: overdueContracts.filter(e => e.storeId).length
+    }
+  };
+};
+
 module.exports = {
   getPeriodByDate,
   getPeriodById,
   getMonthlySnapshots,
   getAttendanceByPeriod,
+  getAttendanceBothScopes,
   getSalesByPeriod,
   getActiveEmployeesForSnapshot,
   getTurnoverMovements,
   getExpiringContracts,
-  getLatestPeriodByYear
+  getLatestPeriodByYear,
+  getIndustrialAndSpSummary
 };

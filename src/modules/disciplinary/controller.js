@@ -68,6 +68,35 @@ const importBulkBipartit = async (req, res) => {
   }
 };
 
+const importSpTokoRekap = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'File Excel wajib diunggah.' });
+    }
+    const result = await service.importSpTokoRekap(req.file.path);
+    return res.status(200).json({
+      success: true,
+      message: `Rekap SP Toko berhasil diimpor (${result.imported} periode bulan).`,
+      data: result
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getSpTokoRekap = async (req, res) => {
+  try {
+    const year = req.query.year || new Date().getFullYear();
+    const data = await service.getSpTokoRekap(year);
+    return res.status(200).json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // === 3. GET ALL CASES ===
 const getAllCases = async (req, res) => {
   try {
@@ -112,4 +141,4 @@ const getDashboardOverview = async (req, res) => {
   }
 };
 
-module.exports = { importBulkSP, importBulkFraud, getAllCases, getCaseById, deleteCase, getDashboardOverview, importBulkBipartit };
+module.exports = { importBulkSP, importBulkFraud, getAllCases, getCaseById, deleteCase, getDashboardOverview, importBulkBipartit, importSpTokoRekap, getSpTokoRekap };

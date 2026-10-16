@@ -255,6 +255,7 @@ model ReportingPeriod {
   
   // ---> PERUBAHAN: HAPUS relasi labourCosts & attendanceRecords lama, TAMBAH agregat <---
   attendanceAggregate AttendanceAggregateMonthly[]
+  spAggregateMonthly  SpAggregateMonthly[]
 
   @@unique([year, month])
   @@map("reporting_periods")
@@ -454,6 +455,25 @@ model IndustrialRelationCase {
   @@map("industrial_relation_cases")
 }
 
+model SpAggregateMonthly {
+  id                 String          @id @default(uuid()) @db.Uuid
+  periodId           String          @map("period_id") @db.Uuid
+  scope              String          @default("STORE") @db.VarChar(20)
+
+  totalEmployees     Int             @default(0) @map("total_employees")
+  tataTertibCount    Int             @default(0) @map("tata_tertib_count")     // Kategori SP: Tata Tertib
+  nonTataTertibCount Int             @default(0) @map("non_tata_tertib_count") // Kategori SP: Non Tata Tertib
+  totalSpIssued      Int             @default(0) @map("total_sp_issued")       // Metrik #27: Jumlah total SP yg diterbitkan
+  breakdown          Json?           @map("breakdown")                         // Rincian SP1-3, Regional, Toko, Jabatan
+
+  createdAt          DateTime        @default(now()) @map("created_at")
+  updatedAt          DateTime        @updatedAt @map("updated_at")
+
+  period             ReportingPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@unique([periodId, scope])
+  @@map("sp_aggregate_monthly")
+}
 // ==========================================
 // IMPORT PIPELINE (Staging - Tetap Pakai UUID/BigInt)
 // ==========================================
