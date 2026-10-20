@@ -1,4 +1,5 @@
 const service = require('./service');
+const fs = require('fs');
 
 const getAllMovements = async (req, res) => {
   try {
@@ -59,6 +60,10 @@ const uploadBulkMovement = async (req, res) => {
     });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
+  } finally {
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+    }
   }
 };
 

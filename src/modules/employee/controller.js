@@ -3,7 +3,12 @@ const importService = require('./import');
 const fs = require('fs');
 
 const getEmployees = async (req, res) => {
-  try { res.status(200).json({ success: true, data: await service.getAllEmployees(req.query.search) }); } 
+  try { 
+    res.status(200).json({ 
+      success: true, 
+      data: await service.getAllEmployees(req.query.search, req.query.status) 
+    }); 
+  } 
   catch (error) { res.status(400).json({ success: false, message: error.message }); }
 };
 
@@ -25,29 +30,20 @@ const updateEmployee = async (req, res) => {
 const deleteEmployee = async (req, res) => {
   try { 
     await service.deleteEmployee(req.params.id);
-    res.status(200).json({ success: true, message: "Data karyawan dihapus" });
+    res.status(200).json({ success: true, message: "Data karyawan dinonaktifkan (Soft Delete)" });
   } catch (error) {
-    if (error.code === 'P2003') return res.status(400).json({ success: false, message: "Gagal menghapus: Karyawan memiliki data transaksi aktif." });
     res.status(400).json({ success: false, message: error.message });
   }
 };
 
 const importEmployees = async (req, res) => {
   try {
-    // 1. CCTV kita yang terbukti berhasil menangkap file
-    console.log("=== DEBUG MULTER ===");
-    console.log("Isi req.file:", req.file);
-
-
-    // 2. Validasi
     if (!req.file) {
       return res.status(400).json({ success: false, message: "File Excel tidak ditemukan" });
     }
 
-    // 3. DI SINI TEMPATNYA! Mesin menyedot data Excel yang ditangkap Multer
     const result = await importService.processExcelImport(req.file.path);
 
-    // 4. Kirim laporan ke Bruno!
     res.status(200).json({
       success: true,
       message: `Import selesai. Sukses: ${result.sukses}, Gagal: ${result.gagal}`,
@@ -55,18 +51,20 @@ const importEmployees = async (req, res) => {
     });
 
   } catch (error) {
-    // Jika di tengah jalan Prisma error, file sampah tetap harus dihapus
-    if (req.file) fs.unlinkSync(req.file.path);
     res.status(500).json({ success: false, message: error.message });
+  } finally {
+    // Hapus file sementara setelah selesai diproses agar disk tidak penuh
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+    }
   }
 };
 
-
 module.exports = {
-    getEmployees,
-    getEmployeeById,
-    createEmployee,
-    updateEmployee,
-    deleteEmployee,
-    importEmployees
+  getEmployees,
+  getEmployeeById,
+  createEmployee,
+  updateEmployee,
+  deleteEmployee,
+  importEmployees
 };

@@ -6,11 +6,12 @@ info:
 http:
   method: POST
   url: http://localhost:5000/api/v1/auth/logout
-  auth: inherit
+  auth:
+    type: bearer
+    token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImY0YWU5YzRlLTdhNmUtNDllMS04ZmQ5LTU5NjZlMzE1NTAzYSIsInJvbGVJZCI6MSwicGVybWlzc2lvbnMiOnsidXNlcnMiOlsiY3JlYXRlIiwicmVhZCIsInVwZGF0ZSIsImRlbGV0ZSJdLCJkYXNoYm9hcmQiOlsicmVhZCJdLCJtYXN0ZXJfZGF0YSI6WyJjcmVhdGUiLCJyZWFkIiwidXBkYXRlIiwiZGVsZXRlIl0sInJlZ2lvbl9hY2Nlc3MiOlsiQUxMIl19LCJpYXQiOjE3OTIzODAyNjQsImV4cCI6MTc5MjQ2NjY2NH0.MP7uGEMcdkjHJCE6LfaKmb1h-fY1RKdUA46giAp9LIs
 
 settings:
   encodeUrl: true
   timeout: 0
   followRedirects: true
   maxRedirects: 5
-  forwardAuthorizationHeader: false
