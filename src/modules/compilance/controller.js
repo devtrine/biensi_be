@@ -10,18 +10,17 @@ const importCompliance = async (req, res) => {
 
     const result = await service.importComplianceData(req.file.path);
     
-    // File sengaja TIDAK dihapus (fs.unlinkSync) agar bisa dipakai untuk Import History
-    
     res.status(200).json({
       success: true,
       message: `Import Kepatuhan Selesai! Berhasil memproses data dari ${result.successCount} toko.`,
-      errors: result.errors,
-    //   filePath: req.file.path 
+      errors: result.errors
     });
   } catch (error) {
-    // Jika format salah/error fatal, baru file dihapus
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ success: false, message: error.message });
+  } finally {
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+    }
   }
 };
 

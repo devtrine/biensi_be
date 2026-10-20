@@ -11,7 +11,26 @@ const importComplianceData = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
   let allData = []; 
 
-  for (const sheetName of workbook.SheetNames) {
+  // Saring sheet untuk kepatuhan (WLKP, perizinan, dsb)
+  let targetSheets = workbook.SheetNames.filter(name => {
+    const lower = name.toLowerCase();
+    return lower.includes('wlkp') || lower.includes('compliance') || lower.includes('kepatuhan') || lower.includes('perizinan');
+  });
+
+  if (targetSheets.length === 0) {
+    targetSheets = workbook.SheetNames.filter(name => {
+      const lower = name.toLowerCase();
+      return !lower.includes('demografi') && !lower.includes('turnover') && !lower.includes('kehadiran') &&
+             !lower.includes('sales') && !lower.includes('fraud') && !lower.includes('kasus') &&
+             !lower.includes('sp') && !lower.includes('phase') && !lower.includes('critical') && !lower.includes('visual');
+    });
+  }
+
+  if (targetSheets.length === 0) {
+    targetSheets = [workbook.SheetNames[0]];
+  }
+
+  for (const sheetName of targetSheets) {
     const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
     if (rawMatrix.length === 0) continue;
 
@@ -49,7 +68,8 @@ const importComplianceData = async (filePath) => {
       }
     }
 
-    if (col.store === undefined) continue;
+    const hasComplianceCols = col.ppAwal !== undefined || col.wlkpAwal !== undefined || col.bpjsAwal !== undefined || col.gensetAwal !== undefined || col.listrikAwal !== undefined;
+    if (col.store === undefined || !hasComplianceCols) continue;
 
     // 2. EKSTRAK DATA PER TOKO
     for (let r = headerRowIndex + 1; r < rawMatrix.length; r++) {

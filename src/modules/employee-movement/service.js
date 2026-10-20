@@ -64,7 +64,26 @@ const importBulkMovement = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
   const allFormattedData = [];
 
-  for (const sheetName of workbook.SheetNames) {
+  // Saring sheet agar hanya membaca sheet yang berhubungan dengan Turnover / PHK
+  let targetSheets = workbook.SheetNames.filter(name => {
+    const lower = name.toLowerCase();
+    return lower.includes('turnover') || lower.includes('turn over') || lower.includes('movement');
+  });
+
+  if (targetSheets.length === 0) {
+    targetSheets = workbook.SheetNames.filter(name => {
+      const lower = name.toLowerCase();
+      return !lower.includes('demografi') && !lower.includes('kehadiran') && !lower.includes('sales') &&
+             !lower.includes('wlkp') && !lower.includes('kasus') && !lower.includes('fraud') &&
+             !lower.includes('sp') && !lower.includes('phase') && !lower.includes('critical') && !lower.includes('visual');
+    });
+  }
+
+  if (targetSheets.length === 0) {
+    targetSheets = [workbook.SheetNames[0]];
+  }
+
+  for (const sheetName of targetSheets) {
     const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
     if (rawMatrix.length === 0) continue;
 
@@ -82,7 +101,7 @@ const importBulkMovement = async (filePath) => {
 
     const combinedHeaderStr = headers1.join('').toUpperCase() + headers2.join('').toUpperCase();
     const isFormatToko = combinedHeaderStr.includes('SHOWROOM') || combinedHeaderStr.includes('REGIONAL');
-    const isFormatHO = combinedHeaderStr.includes('DIVISI') || combinedHeaderStr.includes('DEPARTEMEN') || combinedHeaderStr.includes('KATEGORIPHK');
+    const isFormatHO = (combinedHeaderStr.includes('KATEGORIPHK') || (combinedHeaderStr.includes('DIVISI') && (combinedHeaderStr.includes('RESIGN') || combinedHeaderStr.includes('PHK'))));
 
     let rawExcelData = [];
 

@@ -626,63 +626,64 @@ const importAttendanceUniversal = async (raw2DArray) => {
 
 const importSalesUniversal = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
-  const sheetName = workbook.SheetNames[0];
   
-  // KUNCI SUKSES: { header: 1 } mengubah Excel jadi Array 2D murni
-  const raw2DArray = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+  // Cari sheet sales (misal SALES2026, Sales, Omset, Target)
+  let targetSheets = workbook.SheetNames.filter(name => {
+    const lower = name.toLowerCase();
+    return lower.includes('sales') || lower.includes('omset') || lower.includes('target');
+  });
 
-  let header1Index = -1;
-  // Cari baris NAMA TOKO (kebal spasi)
-  for (let i = 0; i < raw2DArray.length; i++) {
-    if (raw2DArray[i].some(cell => typeof cell === 'string' && cell.replace(/\s+/g, '').toUpperCase().includes('NAMATOKO'))) {
-      header1Index = i;
-      break;
-    }
+  if (targetSheets.length === 0) {
+    targetSheets = workbook.SheetNames.filter(name => {
+      const lower = name.toLowerCase();
+      return !lower.includes('demografi') && !lower.includes('turnover') && !lower.includes('kehadiran') &&
+             !lower.includes('fraud') && !lower.includes('sp') && !lower.includes('kasus') &&
+             !lower.includes('phase') && !lower.includes('critical') && !lower.includes('visual') && !lower.includes('wlkp');
+    });
   }
 
-  if (header1Index === -1) throw new Error("Format salah: Kolom 'NAMA TOKO' tidak ditemukan.");
+  if (targetSheets.length === 0) {
+    targetSheets = [workbook.SheetNames[0]];
+  }
 
-  const headerMonths = raw2DArray[header1Index]; // Berisi: ["NAMA TOKO", ..., "Actual JAN 2026", null, ...]
-  const dataRows = raw2DArray.slice(header1Index + 2); // Lewati judul kolom dan baris "qty, Value"
-  
-  const storeNameIndex = headerMonths.findIndex(h => typeof h === 'string' && h.replace(/\s+/g, '').toUpperCase().includes('NAMATOKO'));
+  let totalFormattedData = [];
 
-  let formattedData = [];
+  for (const sheetName of targetSheets) {
+    const raw2DArray = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    let header1Index = -1;
+    for (let i = 0; i < raw2DArray.length; i++) {
+      if (raw2DArray[i].some(cell => typeof cell === 'string' && cell.replace(/\s+/g, '').toUpperCase().includes('NAMATOKO'))) {
+        header1Index = i;
+        break;
+      }
+    }
 
-  for (const row of dataRows) {
-    const storeName = row[storeNameIndex];
-    if (!storeName || String(storeName).trim() === '') continue; // Skip jika nama toko kosong
+    if (header1Index === -1) continue;
 
-    // 1. === AUTO-CREATE STORE ===
-    const storeId = await repository.getOrCreateStore(storeName);
+    const headerMonths = raw2DArray[header1Index];
+    const dataRows = raw2DArray.slice(header1Index + 2);
+    const storeNameIndex = headerMonths.findIndex(h => typeof h === 'string' && h.replace(/\s+/g, '').toUpperCase().includes('NAMATOKO'));
 
-    // 2. === PROSES UN-PIVOT ANGKA SALES ===
-    for (let colIndex = 0; colIndex < headerMonths.length; colIndex++) {
-      const monthCell = headerMonths[colIndex];
-      
-      if (typeof monthCell === 'string' && monthCell.toUpperCase().includes('ACTUAL')) {
-        const parsedDate = parseMonthYear(monthCell);
-        
-        if (parsedDate) {
-          const periodId = await getOrCreatePeriodId(parsedDate.year, parsedDate.month);
-          
-          // Pembersih Angka (menghapus Rp, koma, titik)
-          const cleanNum = (val) => {
-            if (val === undefined || val === null) return 0;
-            if (typeof val === 'number') return val;
-            const digits = String(val).replace(/\D/g, '');
-            return parseInt(digits, 10) || 0;
-          };
+    for (const row of dataRows) {
+      const storeName = row[storeNameIndex];
+      if (!storeName || String(storeName).trim() === '') continue;
 
-          // Karena pakai { header: 1 }, indeks array pasti pas!
-          const qtyValue = cleanNum(row[colIndex]);
-          const nominalValue = cleanNum(row[colIndex + 1]);
+      const storeId = await repository.getOrCreateStore(storeName);
 
-          // Hanya masukkan jika ada penjualan (hemat database)
+      for (let colIndex = 0; colIndex < headerMonths.length; colIndex++) {
+        const headerText = headerMonths[colIndex];
+        if (typeof headerText === 'string' && headerText.toUpperCase().includes('ACTUAL')) {
+          const parsed = parseMonthYear(headerText);
+          if (!parsed) continue;
+
+          const periodId = await getOrCreatePeriodId(parsed.year, parsed.month);
+          const qtyValue = parseFloat(row[colIndex]) || 0;
+          const nominalValue = parseFloat(row[colIndex + 1]) || 0;
+
           if (qtyValue > 0 || nominalValue > 0) {
-            formattedData.push({
+            totalFormattedData.push({
               periodId: periodId,
-              storeId: storeId, // Pakai ID toko yang otomatis dibuat/dicari tadi
+              storeId: storeId,
               salesQty: qtyValue,
               netSales: nominalValue
             });
@@ -692,11 +693,12 @@ const importSalesUniversal = async (filePath) => {
     }
   }
 
-  if (formattedData.length > 0) {
-    await repository.bulkCreateSales(formattedData);
+  if (totalFormattedData.length === 0) {
+    throw new Error("Format salah atau tidak ada data: Kolom 'NAMA TOKO' dan 'Actual [Bulan Tahun]' tidak ditemukan.");
   }
-  // console.log(successCount);
-  return { imported: formattedData.length };
+
+  await repository.bulkCreateSales(totalFormattedData);
+  return { imported: totalFormattedData.length };
 };
 
 module.exports = { 

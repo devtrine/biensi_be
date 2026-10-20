@@ -210,12 +210,41 @@ const getStorePerformanceByPeriod = async (req, res) => {
 const uploadAttendanceUniversal = async (req, res) => {
   try {
     if (!req.file) throw new Error("File Excel wajib diunggah!");
-    const raw2DArray = parseExcel2D(req.file.path);
-    const data = await service.importAttendanceUniversal(raw2DArray);
-    res.status(201).json({ success: true, message: `Berhasil memproses ${data.imported} bulan absensi!` });
+    const workbook = xlsx.readFile(req.file.path);
+    
+    // Cari semua sheet kehadiran (misal: kehadiran2026, kehadiran2025, kehadiran2024, dll)
+    let targetSheets = workbook.SheetNames.filter(name => {
+      const lower = name.toLowerCase();
+      return lower.includes('kehadiran') || lower.includes('absensi') || lower.includes('attendance');
+    });
+
+    if (targetSheets.length === 0) {
+      targetSheets = workbook.SheetNames.filter(name => {
+        const lower = name.toLowerCase();
+        return !lower.includes('demografi') && !lower.includes('turnover') && !lower.includes('sales') &&
+               !lower.includes('fraud') && !lower.includes('sp') && !lower.includes('kasus') &&
+               !lower.includes('phase') && !lower.includes('critical') && !lower.includes('visual') && !lower.includes('wlkp');
+      });
+    }
+
+    if (targetSheets.length === 0) {
+      targetSheets = [workbook.SheetNames[0]];
+    }
+
+    let totalImported = 0;
+    for (const sheetName of targetSheets) {
+      const raw2DArray = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+      const data = await service.importAttendanceUniversal(raw2DArray);
+      totalImported += (data.imported || 0);
+    }
+
+    res.status(201).json({ success: true, message: `Berhasil memproses ${totalImported} data absensi!` });
   } catch (error) {
-    if (req.file) fs.unlinkSync(req.file.path);
     res.status(400).json({ success: false, message: error.message });
+  } finally {
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+    }
   }
 };
 
@@ -226,6 +255,10 @@ const uploadSalesUniversal = async (req, res) => {
     res.status(201).json({ success: true, message: `Berhasil memproses ${data.imported} data sales toko!` });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
+  } finally {
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+    }
   }
 };
 

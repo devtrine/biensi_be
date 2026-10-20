@@ -24,7 +24,7 @@ const formatEmployeePayload = (data) => {
   return payload;
 };
 
-const getAllEmployees = async (search) => await repository.findAllEmployees(search);
+const getAllEmployees = async (search, status) => await repository.findAllEmployees(search, status);
 
 const getEmployeeById = async (id) => {
   const employee = await repository.findEmployeeById(id);

@@ -30,47 +30,77 @@ const getValue = (row, targetKey) => {
 
 const processExcelImport = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
-  const sheetName = workbook.SheetNames[0];
-  const rawExcelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-const formattedData = rawExcelData.map(row => {
+  // 1. Identifikasi sheet yang berisi data karyawan (HO & Toko)
+  let targetSheets = workbook.SheetNames.filter(name => {
+    const lower = name.toLowerCase();
+    return lower.includes('demografi') || lower.includes('karyawan') || lower.includes('pegawai');
+  });
+
+  // 2. Fallback: jika tidak ada kata 'demografi'/'karyawan' (misal template 1 sheet), cari sheet yang memiliki header NIK/Nama
+  if (targetSheets.length === 0) {
+    targetSheets = workbook.SheetNames.filter(name => {
+      const lower = name.toLowerCase();
+      // Lewati sheet non-karyawan
+      if (lower.includes('turnover') || lower.includes('kehadiran') || lower.includes('sales') || 
+          lower.includes('fraud') || lower.includes('kasus') || lower.includes('phase') || 
+          lower.includes('wlkp') || lower.includes('critical') || lower.includes('visual')) {
+        return false;
+      }
+      const preview = xlsx.utils.sheet_to_json(workbook.Sheets[name], { header: 1 })[0] || [];
+      const headerStr = preview.map(c => String(c || '').toUpperCase().replace(/\s+/g, '')).join(' ');
+      return headerStr.includes('EMPLOYEENO') || headerStr.includes('NAMAKARYAWAN') || headerStr.includes('NIK');
+    });
+  }
+
+  // 3. Fallback terakhir jika tetap tidak ditemukan (template standar polos)
+  if (targetSheets.length === 0) {
+    targetSheets = [workbook.SheetNames[0]];
+  }
+
+  let rawExcelData = [];
+  for (const sheetName of targetSheets) {
+    const sheetData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    rawExcelData.push(...sheetData);
+  }
+
+  const formattedData = rawExcelData.map(row => {
     // Tangani BPJS yang isinya bisa "Terdaftar" atau "Sudah Terdaftar"
-    const bpjsKesehatanString = getValue(row, 'bpjskesehatan') || '';
-    const bpjsKetenagakerjaanString = getValue(row, 'bpjsketenagakerjaan') || '';
+    const bpjsKesehatanString = String(getValue(row, 'bpjskesehatan') || '');
+    const bpjsKetenagakerjaanString = String(getValue(row, 'bpjsketenagakerjaan') || '');
     const isBpjsKesehatanValid = bpjsKesehatanString.toLowerCase().includes('terdaftar');
     const isBpjsKetenagakerjaanValid = bpjsKetenagakerjaanString.toLowerCase().includes('terdaftar');
 
     return {
-      employeeNo: String(getValue(row, 'employeeno') || ''),
-      fullName: getValue(row, 'namakaryawan') || 'TIDAK ADA NAMA',
+      employeeNo: String(getValue(row, 'employeeno') || getValue(row, 'nik') || ''),
+      fullName: getValue(row, 'namakaryawan') || getValue(row, 'nama') || 'TIDAK ADA NAMA',
       gender: getValue(row, 'jeniskelamin') || null,
       birthDate: excelDateToJSDate(getValue(row, 'tanggallahir')),
       educationLevel: getValue(row, 'pendidikanterakhir') || null,
       employmentType: getValue(row, 'statuskaryawan') || 'KONTRAK',
-      joinDate: excelDateToJSDate(getValue(row, 'tglmskkrj')) || new Date(),
-      endDate: excelDateToJSDate(getValue(row, 'tglhabiskontrak')),
-      baseSalary: getValue(row, 'labourcostperemployee') || getValue(row, 'basesalary'),
+      joinDate: excelDateToJSDate(getValue(row, 'tglmskkrj') || getValue(row, 'tanggalmasukkerja')) || new Date(),
+      endDate: excelDateToJSDate(getValue(row, 'tglhabiskontrak') || getValue(row, 'tanggalhabiskontrak')),
+      baseSalary: getValue(row, 'labourcostperemployee') || getValue(row, 'basesalary') || getValue(row, 'gajipokok'),
       
       // Boolean cerdas
       bpjsKetenagakerjaan: isBpjsKetenagakerjaanValid,
       bpjsKesehatan: isBpjsKesehatanValid,
       
-      // Relasi Master Data dengan Fallback (Bisa baca Sheet 1 atau Sheet 2)
-      divisionName: getValue(row, 'divisinewsyfa') || getValue(row, 'divisinew'),
-      departmentName: getValue(row, 'departemennewbyhrbp'),
+      // Relasi Master Data dengan Fallback (Bisa baca Sheet HO atau Sheet Toko)
+      divisionName: getValue(row, 'divisinewsyfa') || getValue(row, 'divisinew') || getValue(row, 'divisi'),
+      departmentName: getValue(row, 'departemennewbyhrbp') || getValue(row, 'departemen'),
       
-      // Unit hanya ada di Sheet 1, Store hanya ada di Sheet 2
-      unitName: getValue(row, 'unitdeptbyhrbp'), 
-      storeName: getValue(row, 'namatoko'),      
+      // Unit hanya ada di Sheet HO, Store hanya ada di Sheet Toko
+      unitName: getValue(row, 'unitdeptbyhrbp') || getValue(row, 'unit'), 
+      storeName: getValue(row, 'namatoko') || getValue(row, 'store') || getValue(row, 'showroom'),      
       
-      positionName: getValue(row, 'jabatan'),
-      levelName: getValue(row, 'leveljabatan')
+      positionName: getValue(row, 'jabatan') || getValue(row, 'posisi'),
+      levelName: getValue(row, 'leveljabatan') || getValue(row, 'level')
     };
   }).filter(data => data.employeeNo && data.employeeNo !== 'undefined' && data.employeeNo.trim() !== '');
-  // Filter di atas mencegah NIK kosong atau 'undefined' masuk ke Prisma
 
   if (formattedData.length === 0) {
-    return { sukses: 0, gagal: 0, errorList: ["Tidak ada data valid yang bisa dibaca. Pastikan baris pertama adalah header."] };
+    return { sukses: 0, gagal: 0, errorList: ["Tidak ada data valid yang bisa dibaca. Pastikan baris pertama adalah header dengan kolom Employee No dan Nama Karyawan."] };
   }
 
   // Lempar data ke Repository!

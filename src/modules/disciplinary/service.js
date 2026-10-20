@@ -69,7 +69,26 @@ const importBulkSP = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
   let allData = [];
 
-  for (const sheetName of workbook.SheetNames) {
+  // Saring sheet untuk SP
+  let targetSheets = workbook.SheetNames.filter(name => {
+    const lower = name.toLowerCase();
+    return (lower.includes('sp') || lower.includes('disiplin')) && !lower.includes('demografi') && !lower.includes('turnover');
+  });
+
+  if (targetSheets.length === 0) {
+    targetSheets = workbook.SheetNames.filter(name => {
+      const lower = name.toLowerCase();
+      return !lower.includes('demografi') && !lower.includes('turnover') && !lower.includes('kehadiran') &&
+             !lower.includes('sales') && !lower.includes('fraud') && !lower.includes('kasus') &&
+             !lower.includes('phase') && !lower.includes('critical') && !lower.includes('visual') && !lower.includes('wlkp');
+    });
+  }
+
+  if (targetSheets.length === 0) {
+    targetSheets = [workbook.SheetNames[0]];
+  }
+
+  for (const sheetName of targetSheets) {
     const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
     if (rawMatrix.length === 0) continue;
 
@@ -101,7 +120,8 @@ const importBulkSP = async (filePath) => {
       }
     }
 
-    if (col.name === undefined) continue;
+    const hasSpIdentifier = col.refNo !== undefined || col.discName !== undefined || col.tataTertib !== undefined || col.nonTataTertib !== undefined;
+    if (col.name === undefined || !hasSpIdentifier) continue;
 
     for (let r = dataStartRow; r < rawMatrix.length; r++) {
       const row = rawMatrix[r] || [];
@@ -139,7 +159,26 @@ const importBulkFraud = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
   let allData = [];
 
-  for (const sheetName of workbook.SheetNames) {
+  // Saring sheet untuk Fraud
+  let targetSheets = workbook.SheetNames.filter(name => {
+    const lower = name.toLowerCase();
+    return (lower.includes('fraud') || lower.includes('bakb')) && !lower.includes('demografi') && !lower.includes('turnover');
+  });
+
+  if (targetSheets.length === 0) {
+    targetSheets = workbook.SheetNames.filter(name => {
+      const lower = name.toLowerCase();
+      return !lower.includes('demografi') && !lower.includes('turnover') && !lower.includes('kehadiran') &&
+             !lower.includes('sales') && !lower.includes('sp') && !lower.includes('kasus') &&
+             !lower.includes('phase') && !lower.includes('critical') && !lower.includes('visual') && !lower.includes('wlkp');
+    });
+  }
+
+  if (targetSheets.length === 0) {
+    targetSheets = [workbook.SheetNames[0]];
+  }
+
+  for (const sheetName of targetSheets) {
     const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
     if (rawMatrix.length === 0) continue;
 
@@ -205,7 +244,26 @@ const importBulkBipartit = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
   let allData = [];
 
-  for (const sheetName of workbook.SheetNames) {
+  // Saring sheet untuk Bipartit / Mediasi
+  let targetSheets = workbook.SheetNames.filter(name => {
+    const lower = name.toLowerCase();
+    return (lower.includes('kasus') || lower.includes('bipartit') || lower.includes('mediasi') || lower.includes('disnaker')) && !lower.includes('demografi') && !lower.includes('turnover');
+  });
+
+  if (targetSheets.length === 0) {
+    targetSheets = workbook.SheetNames.filter(name => {
+      const lower = name.toLowerCase();
+      return !lower.includes('demografi') && !lower.includes('turnover') && !lower.includes('kehadiran') &&
+             !lower.includes('sales') && !lower.includes('fraud') && !lower.includes('sp') &&
+             !lower.includes('phase') && !lower.includes('critical') && !lower.includes('visual') && !lower.includes('wlkp');
+    });
+  }
+
+  if (targetSheets.length === 0) {
+    targetSheets = [workbook.SheetNames[0]];
+  }
+
+  for (const sheetName of targetSheets) {
     const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
     if (rawMatrix.length === 0) continue;
 
@@ -221,14 +279,14 @@ const importBulkBipartit = async (filePath) => {
           col.name = c;
           dataStartRow = Math.max(dataStartRow, r + 1);
         }
-        else if (cell.includes('EMPLOYEENO')) col.empNo = c;
-        else if (cell.includes('STORENAME') || cell.includes('SHOWROOM')) col.store = c;
-        else if (cell.includes('BIPARTIT')) { col.bipartit = c; dataStartRow = Math.max(dataStartRow, r + 1); }
-        else if (cell.includes('MEDIASI')) col.mediasi = c;
-        else if (cell.includes('PIHAKKE3') || cell.includes('PIHAKKETIGA')) col.pihak3 = c;
-        else if (cell.includes('KETERANGAN')) col.ket = c;
-        else if (cell.includes('PERIODEAWAL')) col.startDate = c;
-        else if (cell.includes('PERIODESELESAI')) col.endDate = c;
+        else if (cell.includes('EMPLOYEENO') && col.empNo === undefined) col.empNo = c;
+        else if ((cell.includes('STORENAME') || cell.includes('SHOWROOM')) && col.store === undefined) col.store = c;
+        else if (cell.includes('BIPARTIT') && col.bipartit === undefined) { col.bipartit = c; dataStartRow = Math.max(dataStartRow, r + 1); }
+        else if (cell.includes('MEDIASI') && col.mediasi === undefined) col.mediasi = c;
+        else if ((cell.includes('PIHAKKE3') || cell.includes('PIHAKKETIGA')) && col.pihak3 === undefined) col.pihak3 = c;
+        else if (cell.includes('KETERANGAN') && col.ket === undefined) col.ket = c;
+        else if (cell.includes('PERIODEAWAL') && col.startDate === undefined) col.startDate = c;
+        else if (cell.includes('PERIODESELESAI') && col.endDate === undefined) col.endDate = c;
       }
     }
 
@@ -273,7 +331,26 @@ const importSpTokoRekap = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
   let importedCount = 0;
 
-  for (const sheetName of workbook.SheetNames) {
+  // Saring sheet untuk Rekap SP Toko
+  let targetSheets = workbook.SheetNames.filter(name => {
+    const lower = name.toLowerCase();
+    return (lower.includes('sptoko') || lower.includes('rekap')) && !lower.includes('demografi') && !lower.includes('turnover');
+  });
+
+  if (targetSheets.length === 0) {
+    targetSheets = workbook.SheetNames.filter(name => {
+      const lower = name.toLowerCase();
+      return !lower.includes('demografi') && !lower.includes('turnover') && !lower.includes('kehadiran') &&
+             !lower.includes('sales') && !lower.includes('fraud') && !lower.includes('kasus') &&
+             !lower.includes('phase') && !lower.includes('critical') && !lower.includes('visual') && !lower.includes('wlkp');
+    });
+  }
+
+  if (targetSheets.length === 0) {
+    targetSheets = [workbook.SheetNames[0]];
+  }
+
+  for (const sheetName of targetSheets) {
     const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
     if (rawMatrix.length === 0) continue;
 

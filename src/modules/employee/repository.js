@@ -19,11 +19,12 @@ const normalizeGender = (val) => {
   return clean;
 };
 
-const findAllEmployees = async (searchQuery = '') => {
+const findAllEmployees = async (searchQuery = '', status = null) => {
   return await prisma.employee.findMany({
     where: {
       // Saring agar karyawan bayangan (auto-create dari SP/Turnover yang gendernya null) tidak mengotori list
       gender: { not: null },
+      ...(status ? { status } : { status: { not: 'INACTIVE' } }),
       ...(searchQuery ? {
         OR: [
           { fullName: { contains: searchQuery, mode: 'insensitive' } },
@@ -95,7 +96,10 @@ const updateEmployee = async (id, data) => {
 };
 
 const deleteEmployee = async (id) => {
-  return await prisma.employee.delete({ where: { id } });
+  return await prisma.employee.update({
+    where: { id },
+    data: { status: 'INACTIVE' }
+  });
 };
 
 const processBulkImport = async (rawData) => {
