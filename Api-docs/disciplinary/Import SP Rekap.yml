@@ -5,7 +5,15 @@ info:
 
 http:
   method: POST
-  url: "http:"
+  url: http://localhost:5000/api/v1/disciplinary/sp-rekap/import
+  body:
+    type: multipart-form
+    data:
+      - name: file
+        type: file
+        value:
+          - C:\yt-dlp\SPTokoRekap.xlsx
+        contentType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
   auth: inherit
 
 settings:

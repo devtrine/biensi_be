@@ -193,7 +193,7 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
     return true;
   });
 
-  // Ringkasan 3 Kolom Sekaligus (Corporate, HQ, Store) untuk Tabel Matriks KPI
+  // Untuk filter hq dan store
   const hqSnapshots = rawSnapshots.filter(s => s.employee && s.employee.storeId === null);
   const storeSnapshots = rawSnapshots.filter(s => s.employee && s.employee.storeId !== null);
   const activeScopeStats = summarizeEmployeeGroup(snapshots, period.year, period.month, totalSales);
@@ -204,7 +204,7 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
     store: summarizeEmployeeGroup(storeSnapshots, period.year, period.month, totalSales)
   };
 
-  // Proses Demografi & Grouping Biaya (Format Asli untuk Visual Charts)
+  // Proses Demografi & Grouping Biaya
   let totalAge = 0;
   let validAgeCount = 0;
 
@@ -213,7 +213,6 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
     byDepartment: {},
     byGender: {},
     byEmploymentType: {},
-    // [TAMBAHAN METRIKS & CHARTS]:
     byEmployeeLevel: activeScopeStats.byLevelStandard,
     byAgeBracket: activeScopeStats.byAgeBracket,
     byTenureBracket: activeScopeStats.byTenureBracket,
@@ -283,6 +282,23 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
 
   const avgAge = validAgeCount ? (totalAge / validAgeCount).toFixed(1) : 0;
 
+  const productionEmployees = snapshots.filter(s => {
+    const deptName = String(s.employee?.department?.name || '').toUpperCase().trim();
+    return deptName === 'PRODUCTION' || deptName.includes('PRODUKSI');
+  });
+
+  const prodHeadcount = productionEmployees.length;
+  const totalHeadcount = snapshots.length;
+
+  // Metrik Production / Total Employee (Target: 0.05 atau 1 : 20)
+  const prodRatioDecimal = totalHeadcount > 0
+    ? Number((prodHeadcount / totalHeadcount).toFixed(2))
+    : 0;
+  const prodRatioDenominator = prodHeadcount > 0
+    ? Math.round(totalHeadcount / prodHeadcount)
+    : 0;
+  const prodTarget = 0.05;
+
   const formatCostAgg = (aggObj) => {
     return Object.keys(aggObj).map(key => {
       const item = aggObj[key];
@@ -327,7 +343,7 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
       distribution
     },
     attendance: attendance || null,
-    attendanceByScope, // [TAMBAHAN METRIKS #40-#43]: { hq, store }
+    attendanceByScope, // membedakan HQ dan Store
     productivity: {
       totalBudgetCost: totalBudget,
       totalActualCost: totalActual,
@@ -336,6 +352,16 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
       revenuePerFte: snapshots.length > 0 ? (totalSales / snapshots.length).toFixed(2) : '0.00',
       payrollMultiplier: totalActual > 0 ? Number((totalSales / totalActual).toFixed(2)) : 0,
       avgEmploymentCost: snapshots.length > 0 ? Math.round(totalActual / snapshots.length) : 0,
+
+      productionProductivity: {
+        productionHeadcount: prodHeadcount,
+        totalHeadcount: totalHeadcount,
+        ratioText: prodHeadcount > 0 ? `Ratio 1 : ${prodRatioDenominator}` : 'Ratio 0 : 0',
+        ratioDecimal: prodRatioDecimal,
+        targetDecimal: prodTarget,         
+        isTargetAchieved: prodHeadcount > 0 && prodRatioDecimal <= prodTarget
+      },
+
       costByDivision: formatCostAgg(costDistribution.byDivision),
       costByDepartment: formatCostAgg(costDistribution.byDepartment).sort((a, b) => b.actualCost - a.actualCost),
       costByEmploymentType: formatCostAgg(costDistribution.byEmploymentType)
