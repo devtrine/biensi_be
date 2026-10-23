@@ -1,28 +1,22 @@
-# 1. Node Dependencies (Sangat berat, biar di-install masing-masing lewat npm install)
 node_modules/
 
-# 2. Environment Variables (CRITICAL SECURITY: Jangan sampai password database bocor!)
 .env
 .env.local
 .env.*.local
 
-# 3. File Uploads (History Excel HR - SANGAT RAHASIA)
 uploads/*
 !uploads/.gitkeep
-# 4. Logs (File log lokal yang tidak perlu masuk repo)
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 logs/
 *.log
 
-# 5. OS & Editor (File sampah bawaan Windows/Mac dan VS Code)
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
 ehthumbs.db
 
-# 6. Prisma (Jika Anda pakai SQLite untuk testing)
 *.db
 *.db-journal

@@ -2,18 +2,26 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Pastikan folder uploads selalu ada secara otomatis (Anti-ENOENT)
-const uploadDir = path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// Path folder uploads absolut (biensi_be/uploads)
+const uploadDir = path.resolve(__dirname, '../../uploads');
+
+// Otomatisasi pembuatan direktori dan permissions 775 (Cross-platform safe)
+const ensureUploadDir = (dir) => {
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o775 });
+    }
+    fs.chmodSync(dir, 0o775);
+  } catch (err) {
+    // Diabaikan pada OS non-POSIX (Windows)
+  }
+};
+ensureUploadDir(uploadDir);
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir); // Simpan di folder uploads dengan path absolut
+    ensureUploadDir(uploadDir);
+    cb(null, uploadDir); // Simpan di folder uploads dengan path absolut konsisten
   },
   filename: function (req, file, cb) {
     // Penamaan file yang rapi dan aman dari Path Traversal
@@ -42,9 +50,7 @@ const upload = multer({
 
 const imageStorage = multer.diskStorage({
   destination: function (req, file, cb) {
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
+    ensureUploadDir(uploadDir);
     cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
@@ -68,7 +74,9 @@ const image = multer({
   }
 });
 
-// Kita export variabel 'upload' agar bisa di-import di routes mana pun
 module.exports = {
-  upload, image
+  upload,
+  image,
+  uploadDir,
+  ensureUploadDir
 };
