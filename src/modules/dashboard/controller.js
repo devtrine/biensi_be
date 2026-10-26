@@ -2,11 +2,11 @@ const service = require('./service');
 
 const getSummary = async (req, res) => {
   try {
-    // Tangkap filter utama sesuai UI
+    // filter buat FE
     const filters = {
       year: req.query.year,
-      month: req.query.month, // Opsional: jika Frontend ingin spesifik per bulan
-      scope: req.query.scope  // Corporate, HQ, atau Store
+      month: req.query.month, 
+      scope: req.query.scope  
     };
 
     const data = await service.getMainExecutiveDashboard(filters);

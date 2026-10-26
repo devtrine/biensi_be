@@ -1,6 +1,5 @@
 const repository = require('./repository');
 const xlsx = require('xlsx');
-const sr = require('../store/repository')
 const prisma = require('../../config/database')
 
 // Utility: Hitung usia/masa kerja ke format Desimal
@@ -538,7 +537,7 @@ const getStorePerformanceDashboard = async (periodId) => {
   };
 };
 
-//Universal Import 
+// Universal Import 
 const importAttendanceUniversal = async (raw2DArray) => {
   let successCount = 0;
   let currentScope = 'HQ';
@@ -602,8 +601,7 @@ const importAttendanceUniversal = async (raw2DArray) => {
       attendanceRate: isNaN(rawRate) ? 0 : Number(rawRate.toFixed(4))
     };
 
-    // ✅ PENGAMAN UTAMA UPLOAD BULANAN:
-    // Jangan proses dan JANGAN buat ReportingPeriod jika bulan ini di Excel masih kosong (bulan masa depan)
+    // Jangan proses dan JANGAN buat ReportingPeriod jika bulan ini di Excel masih kosong
     const hasActivity = (
       data.sickCount > 0 ||
       data.permissionCount > 0 ||
@@ -613,10 +611,10 @@ const importAttendanceUniversal = async (raw2DArray) => {
     );
     if (data.totalEmployees === 0 || !hasActivity) continue;
 
-    // 6. Buat/Ambil periodId HANYA untuk bulan yang datanya benar-benar sudah terisi!
+    // Buat/Ambil periodId HANYA untuk bulan yang datanya benar-benar sudah terisi!
     const periodId = await getOrCreatePeriodId(parsedDate.year, parsedDate.month);
 
-    // 7. Upsert ke Database (Jika bulan lama -> UPDATE, jika bulan baru -> CREATE)
+    // Upsert ke Database (Jika bulan lama -> UPDATE, jika bulan baru -> CREATE)
     await repository.upsertAttendanceAggregate(periodId, currentScope, data);
     successCount++;
   }
@@ -627,7 +625,7 @@ const importAttendanceUniversal = async (raw2DArray) => {
 const importSalesUniversal = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
   
-  // Cari sheet sales (misal SALES2026, Sales, Omset, Target)
+  // Cari sheet sales
   let targetSheets = workbook.SheetNames.filter(name => {
     const lower = name.toLowerCase();
     return lower.includes('sales') || lower.includes('omset') || lower.includes('target');

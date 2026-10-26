@@ -1,6 +1,6 @@
 const prisma = require('../../config/database');
 
-// 1. Ambil Periode berdasarkan Tahun & Bulan (Jika bulan tersebut belum ada, fallback ke bulan terakhir di tahun itu)
+// Ambil Periode berdasarkan Tahun & Bulan
 const getPeriodByDate = async (year, month) => {
   const numYear = parseInt(year, 10);
   const numMonth = parseInt(month, 10);
@@ -18,14 +18,14 @@ const getPeriodByDate = async (year, month) => {
   return period;
 };
 
-// 2. Ambil Periode berdasarkan ID
+// Ambil Periode berdasarkan ID
 const getPeriodById = async (periodId) => {
   return await prisma.reportingPeriod.findUnique({
     where: { id: periodId }
   });
 };
 
-// 3. Ambil Snapshot Karyawan (Dengan Auto-Fallback jika di bulan Oktober belum di-generate snapshot)
+// Ambil Snapshot Karyawan
 const getMonthlySnapshots = async (periodId, year) => {
   const includeRel = {
     employee: {
@@ -71,7 +71,7 @@ const getLatestPeriodByYear = async (year) => {
   });
 };
 
-// 4. Ambil Absensi Agregat (FIXED: Menggunakan findFirst + Mendukung Filter Scope HQ / STORE)
+// Ambil Absensi
 const getAttendanceByPeriod = async (periodId, scope = 'Corporate', year = null) => {
   const normScope = String(scope || '').toUpperCase();
   const whereClause = { periodId };
@@ -108,7 +108,7 @@ const getAttendanceByPeriod = async (periodId, scope = 'Corporate', year = null)
   return attendance;
 };
 
-// 5. Ambil Sales per Periode (Dengan Auto-Fallback ke bulan terakhir yang punya sales valid di tahun tersebut, misal Juli 2026)
+// Ambil Sales per Periode normalnya ngambil data terakhir
 const getSalesByPeriod = async (periodId, year = null) => {
   const sales = await prisma.salesMonthly.findMany({
     where: { periodId },
@@ -147,7 +147,7 @@ const getSalesByPeriod = async (periodId, year = null) => {
   return validSales;
 };
 
-// 6. Ambil Karyawan Toko Murni (19 orang dari demografi toko)
+// Ambil Karyawan Toko 
 const getActiveEmployeesForSnapshot = async () => {
   return await prisma.employee.findMany({
     where: {
@@ -160,7 +160,7 @@ const getActiveEmployeesForSnapshot = async () => {
   });
 };
 
-// 7. Ambil Data Turnover (Mendukung Filter Scope Corporate / HQ / Store)
+// Ambil Data Turnover (Mendukung Filter Scope Corporate / HQ / Store)
 const getTurnoverMovements = async (startDate, endDate, scope = 'Corporate') => {
   const normScope = String(scope || '').toUpperCase();
   const whereClause = {
@@ -184,7 +184,7 @@ const getTurnoverMovements = async (startDate, endDate, scope = 'Corporate') => 
   });
 };
 
-// 8. Ambil Kontrak yang Akan Habis (Mendukung Filter Scope)
+// Ambil Kontrak yang Akan Habis 
 const getExpiringContracts = async (targetDate, scope = 'Corporate') => {
   const normScope = String(scope || '').toUpperCase();
   const whereClause = {
@@ -207,11 +207,7 @@ const getExpiringContracts = async (targetDate, scope = 'Corporate') => {
   });
 };
 
-// ============================================================================
-// [TAMBAHAN KHUSUS METRIKS #40-#43 & #23, #26, #27]
-// ============================================================================
-
-// 9. Ambil Absensi HQ dan STORE Sekaligus (Untuk Metriks #40-#43 & Grafik Perbandingan)
+// Ambil Absensi HQ dan STORE Sekaligus
 const getAttendanceBothScopes = async (periodId, year = null) => {
   const [hq, store] = await Promise.all([
     getAttendanceByPeriod(periodId, 'HQ', year),
@@ -220,7 +216,7 @@ const getAttendanceBothScopes = async (periodId, year = null) => {
   return { hq, store };
 };
 
-// 10. Ambil Ringkasan SP Toko (SpAggregateMonthly), SP HO, Bipartit (#26), & Kontrak Lewat Jatuh Tempo (#23)
+// Ambil Ringkasan SP Toko, SP HO, Bipartit, & Kontrak Lewat Jatuh Tempo
 const getIndustrialAndSpSummary = async (year) => {
   const numYear = parseInt(year, 10) || new Date().getFullYear();
   const startOfYear = new Date(Date.UTC(numYear, 0, 1, 0, 0, 0));

@@ -4,10 +4,7 @@ const controller = require('./controller');
 const { authenticate, checkPermission } = require('../../middleware/auth');
 const uploader = require('../../middleware/upload')
 
-// 1. GERBANG UTAMA: Pastikan user login & token valid
 router.use(authenticate);
-// --- SETTINGS (PROFIL PRIBADI) ---
-// Bebas diakses selama sudah login
 router.get('/profile', controller.getMyProfile);
 router.put('/profile', uploader.image.single('photo'), controller.updateMyProfile);
 

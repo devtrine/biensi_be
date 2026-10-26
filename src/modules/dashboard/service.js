@@ -1,7 +1,7 @@
 const repository = require('./repository');
 const prisma = require('../../config/database');
 
-// Helper untuk mengelompokkan populasi karyawan (dipakai oleh Corporate, HQ, dan Store untuk Matriks #1-#21 & #28-#39)
+// Helper untuk mengelompokkan populasi karyawan (dipakai oleh Corporate, HQ, dan Store)
 const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0) => {
   const refDate = new Date(Date.UTC(periodYear, periodMonth, 0));
   let totalAge = 0; let validAgeCount = 0;
@@ -12,7 +12,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
   const byAgeBracket = { under21: 0, age21To25: 0, age26To30: 0, age31To40: 0, over40: 0 };
   const byTenureBracket = { under1Year: 0, tenure1To3Years: 0, tenure3To5Years: 0, over5Years: 0 };
 
-  // Metrik #11 - #17 (7 Level Jabatan Baku)
+  // 7 Level Jabatan
   const byLevelStandard = {
     bodPlus: 0,          // #11 BOD+
     manager: 0,          // #12 Manager
@@ -23,7 +23,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     staffCrew: 0         // #17 Staff / Crew / Cashier / SA
   };
 
-  // Metrik #18 - #21 (4 Tipe Kontrak Baku)
+  // 4 Tipe Kontrak 
   const byEmploymentStandard = {
     pkwtt: 0,      // #18 Fulltime (TETAP)
     pkwt: 0,       // #19 Contract (KONTRAK)
@@ -31,7 +31,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     internship: 0  // #21 Internship (PERBANTUAN / MAGANG)
   };
 
-  // Metrik #4, #9, #10 (Usia & Masa Kerja berdasarkan Kelompok Jabatan: Staff vs Leader vs Management)
+  // Usia & Masa Kerja berdasarkan Kelompok Jabatan: Staff vs Leader vs Management
   const posGroupAcc = {
     staff: { count: 0, ageSum: 0, ageCnt: 0, tenSum: 0, tenCnt: 0 },
     leader: { count: 0, ageSum: 0, ageCnt: 0, tenSum: 0, tenCnt: 0 },
@@ -47,11 +47,11 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     budgetCost += bud;
     actualCost += act;
 
-    // Gender (#6)
+    // Gender 
     if (String(emp.gender || '').toUpperCase().includes('LAKI')) byGender.LAKI_LAKI++;
     else byGender.PEREMPUAN++;
 
-    // Usia (#7)
+    // Usia
     let ageVal = null;
     if (emp.birthDate) {
       ageVal = periodYear - new Date(emp.birthDate).getFullYear();
@@ -66,7 +66,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
       }
     }
 
-    // Masa Kerja (#8)
+    // Masa Kerja 
     let tenureVal = null;
     if (emp.joinDate) {
       tenureVal = Math.max(0, (refDate - new Date(emp.joinDate)) / (1000 * 60 * 60 * 24 * 365.25));
@@ -78,7 +78,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
       else byTenureBracket.over5Years++;
     }
 
-    // Klasifikasi Level Jabatan (#11 - #17 & #4, #9, #10)
+    // Klasifikasi Level Jabatan 
     const lvlStr = `${emp.position?.employeeLevel || ''} ${emp.position?.name || ''}`.toUpperCase();
     let groupKey = 'staff';
 
@@ -115,7 +115,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
       posGroupAcc[groupKey].tenCnt++;
     }
 
-    // Klasifikasi Tipe Kontrak (#18 - #21)
+    // Klasifikasi Tipe Kontrak 
     const empTypeStr = String(emp.employmentType || '').toUpperCase();
     if (empTypeStr.includes('TETAP') || empTypeStr.includes('PKWTT')) byEmploymentStandard.pkwtt++;
     else if (empTypeStr.includes('KONTRAK') || empTypeStr.includes('PKWT')) byEmploymentStandard.pkwt++;
@@ -164,9 +164,6 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
   };
 };
 
-// ============================================================================
-// 1. FUNGSI SAKTI 1: SUMMARY DASHBOARD (CHARTS + METRIKS #1-#21 & #28-#43)
-// ============================================================================
 const getDashboardSummary = async (periodId, scope = 'Corporate') => {
   const period = await prisma.reportingPeriod.findUnique({ where: { id: periodId } });
   if (!period) throw new Error('Periode tidak ditemukan');
@@ -542,7 +539,7 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
         BARAT: formatRegion(regionalData.BARAT),
         TIMUR: formatRegion(regionalData.TIMUR)
       },
-      // [TAMBAHAN METRIK #39]: Komposisi labour cost per store vs sales
+      // Komposisi labour cost per store vs sales
       costRatioByStoreType: {
         familyStore: storeTypeAcc['FAMILY STORE'].sales > 0
           ? ((storeTypeAcc['FAMILY STORE'].cost / storeTypeAcc['FAMILY STORE'].sales) * 100).toFixed(2) + '%' : '0.00%',
@@ -561,9 +558,6 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
   };
 };
 
-// ============================================================================
-// 3. FUNGSI SAKTI 3: TURNOVER (DITAMBAH BREAKDOWN CORPORATE / HQ / STORE #5 & #22)
-// ============================================================================
 const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
   const numYear = parseInt(year, 10) || new Date().getFullYear();
   const numMonth = parseInt(month, 10) || (new Date().getMonth() + 1);
@@ -647,7 +641,7 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
       nonVoluntary: monthlyTrendMap[m].nonVoluntary
     }));
 
-  // [TAMBAHAN METRIK #5]: Breakdown Voluntary vs Non-Voluntary untuk Corporate, HQ, dan Store
+  // Voluntary vs Non-Voluntary untuk Corporate, HQ, dan Store
   const calcSplit = (arr) => {
     const total = arr.length;
     const vol = arr.filter(m => m.movementType === 'VOLUNTARY').length;
@@ -710,9 +704,6 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
   };
 };
 
-// ============================================================================
-// 4. ORCHESTRATOR UTAMA (DIGUNAKAN OLEH CONTROLLER)
-// ============================================================================
 const getMainExecutiveDashboard = async (filters = {}) => {
   const year = parseInt(filters.year, 10) || new Date().getFullYear();
   const month = parseInt(filters.month, 10) || new Date().getMonth() + 1;

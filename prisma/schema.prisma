@@ -6,9 +6,7 @@ datasource db {
   provider = "postgresql"
 }
 
-// ==========================================
 // AUTH & USER MANAGEMENT 
-// ==========================================
 model Role {
   id          Int      @id @default(autoincrement())
   name        String   @unique @db.VarChar(50)
@@ -26,12 +24,8 @@ model User {
   name        String    @db.VarChar(100)
   password    String
   roleId      Int?       @map("role_id")
-  
-  // Tambahan dari Mockup Settings
   phoneNumber String?   @map("phone_number") @db.VarChar(50)
   photoUrl    String?   @map("photo_url")
-  
-  // Tambahan dari Mockup User Management
   lastLogin   DateTime? @map("last_login") @db.Timestamp(6)
   
   isActive    Boolean   @default(true) @map("is_active")
@@ -43,9 +37,7 @@ model User {
   @@map("users")
 }
 
-// ==========================================
-// MASTER ORGANIZATION (Dioptimasi ke Integer)
-// ==========================================
+// MASTER ORGANIZATION
 model Division {
   id        Int       @id @default(autoincrement())
   code      String    @unique @db.VarChar(50)
@@ -112,9 +104,7 @@ model Unit {
   @@map("units")
 }
 
-// ==========================================
-// MASTER STORE (Dioptimasi ke Integer)
-// ==========================================
+// MASTER DATA STORE 
 model Store {
   id        Int       @id @default(autoincrement())
   storeCode String    @unique @map("store_code") @db.VarChar(50)
@@ -156,9 +146,7 @@ model StoreCompliance {
   @@map("store_compliances")
 }
 
-// ==========================================
-// MASTER EMPLOYEE & MOVEMENTS (UUID)
-// ==========================================
+// MASTER EMPLOYEE & MOVEMENTS
 model Employee {
   id                  String    @id @default(uuid()) @db.Uuid
   employeeNo          String    @unique @map("employee_no") @db.VarChar(50)
@@ -177,10 +165,7 @@ model Employee {
   status              String?   @default("ACTIVE") @db.VarChar(30)
   bpjsKetenagakerjaan Boolean?  @default(false) @map("bpjs_ketenagakerjaan")
   bpjsKesehatan       Boolean?  @default(false) @map("bpjs_kesehatan")
-  
-  // ---> PERUBAHAN: TAMBAHAN BASE SALARY <---
   baseSalary          Decimal?  @map("base_salary") @db.Decimal(18, 2)
-  
   createdAt           DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt           DateTime? @updatedAt @map("updated_at") @db.Timestamp(6)
 
@@ -192,9 +177,7 @@ model Employee {
 
   monthlySnapshots  EmployeeMonthlySnapshot[]
   movements         EmployeeMovement[]
-  
-  // ---> PERUBAHAN: HAPUS relasi attendanceRecords lama <---
-  
+
   recruitmentHires  RecruitmentHire[]
   disciplinaryCases DisciplinaryCase[]
   fraudCases        FraudCase[]
@@ -239,9 +222,7 @@ model EmployeeMovement {
   @@map("employee_movements")
 }
 
-// ==========================================
-// REPORTING & SNAPSHOTS (UUID)
-// ==========================================
+// REPORTING & SNAPSHOTS MONTHLY
 model ReportingPeriod {
   id          String   @id @default(uuid()) @db.Uuid
   year        Int      @db.SmallInt
@@ -252,8 +233,6 @@ model ReportingPeriod {
   employeeSnaps   EmployeeMonthlySnapshot[]
   salesMonthly    SalesMonthly[]
   kpiPositions    KpiPosition[]
-  
-  // ---> PERUBAHAN: HAPUS relasi labourCosts & attendanceRecords lama, TAMBAH agregat <---
   attendanceAggregate AttendanceAggregateMonthly[]
   spAggregateMonthly  SpAggregateMonthly[]
 
@@ -276,8 +255,6 @@ model EmployeeMonthlySnapshot {
   employmentStatus    String?   @map("employment_status") @db.VarChar(30)
   bpjsKetenagakerjaan Boolean?  @map("bpjs_ketenagakerjaan")
   bpjsKesehatan       Boolean?  @map("bpjs_kesehatan")
-  
-  // ---> PERUBAHAN: SPLIT LABOUR COST <---
   budgetLabourCost    Decimal?  @map("budget_labour_cost") @db.Decimal(18, 2)
   actualLabourCost    Decimal?  @map("actual_labour_cost") @db.Decimal(18, 2)
   
@@ -295,7 +272,6 @@ model EmployeeMonthlySnapshot {
   @@map("employee_monthly_snapshots")
 }
 
-// ---> PERUBAHAN: TAMBAH MODEL BARU INI <---
 model AttendanceAggregateMonthly {
   id               String   @id @default(uuid()) @db.Uuid
   periodId         String   @map("period_id") @db.Uuid
@@ -330,9 +306,7 @@ model SalesMonthly {
   @@map("sales_monthly")
 }
 
-// ==========================================
-// RECRUITMENT & KPI (UUID)
-// ==========================================
+// RECRUITMENT & KPI Stats
 model RecruitmentRequest {
   id                 String    @id @default(uuid()) @db.Uuid
   requestCode        String    @unique @map("request_code") @db.VarChar(50)
@@ -386,9 +360,7 @@ model KpiPosition {
   @@map("kpi_positions")
 }
 
-// ==========================================
-// RISK, FRAUD & IR (UUID)
-// ==========================================
+// RISK, FRAUD & IR 
 model DisciplinaryCase {
   id             String    @id @default(uuid()) @db.Uuid
   employeeId     String    @map("employee_id") @db.Uuid
@@ -474,9 +446,8 @@ model SpAggregateMonthly {
   @@unique([periodId, scope])
   @@map("sp_aggregate_monthly")
 }
-// ==========================================
+
 // IMPORT PIPELINE (Staging - Tetap Pakai UUID/BigInt)
-// ==========================================
 model ImportBatch {
   id          String    @id @default(uuid()) @db.Uuid
   fileName    String    @map("file_name") @db.VarChar(255)
