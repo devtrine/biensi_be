@@ -48,7 +48,7 @@ const getMonthlySnapshots = async (periodId, year) => {
     const latestPeriodWithSnap = await prisma.reportingPeriod.findFirst({
       where: {
         year: parseInt(year, 10),
-        employeeSnapshots: { some: {} }
+        employeeSnaps: { some: {} }
       },
       orderBy: { month: 'desc' }
     });
@@ -91,7 +91,7 @@ const getAttendanceByPeriod = async (periodId, scope = 'Corporate', year = null)
     const latestAttPeriod = await prisma.reportingPeriod.findFirst({
       where: {
         year: parseInt(year, 10),
-        attendanceAggregates: { some: {} }
+        attendanceAggregate: { some: {} }
       },
       orderBy: { month: 'desc' }
     });
