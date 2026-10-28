@@ -138,7 +138,7 @@ const getSalesByPeriod = async (periodId, year = null) => {
   return validSales;
 };
 
-// Ambil Karyawan Toko 
+// Ambil Karyawan Toko
 const getActiveEmployeesForSnapshot = async () => {
   return await prisma.employee.findMany({
     where: {
@@ -175,7 +175,7 @@ const getTurnoverMovements = async (startDate, endDate, scope = 'Corporate') => 
   });
 };
 
-// Ambil Kontrak yang Akan Habis 
+// Ambil Kontrak yang Akan Habis
 const getExpiringContracts = async (targetDate, scope = 'Corporate') => {
   const normScope = String(scope || '').toUpperCase();
   const whereClause = {
@@ -207,13 +207,13 @@ const getAttendanceBothScopes = async (periodId, year = null) => {
   return { hq, store };
 };
 
-// Ambil Ringkasan SP Toko, SP HO, Bipartit, & Kontrak Lewat Jatuh Tempo
+// Ambil Ringkasan SP Toko, SP HO, Bipartit, Kontrak Lewat Jatuh Tempo, & Perizinan (WLKP/PP/K3)
 const getIndustrialAndSpSummary = async (year) => {
   const numYear = parseInt(year, 10) || new Date().getFullYear();
   const startOfYear = new Date(Date.UTC(numYear, 0, 1, 0, 0, 0));
   const endOfYear = new Date(Date.UTC(numYear, 11, 31, 23, 59, 59));
 
-  const [spStoreRecords, spHoCases, irCases, overdueContracts] = await Promise.all([
+  const [spStoreRecords, spHoCases, irCases, overdueContracts, compliances] = await Promise.all([
     prisma.spAggregateMonthly.findMany({
       where: { scope: 'STORE', period: { year: numYear } }
     }),
@@ -234,12 +234,19 @@ const getIndustrialAndSpSummary = async (year) => {
         endDate: { lt: new Date() }
       },
       select: { id: true, storeId: true }
+    }),
+    prisma.storeCompliance.findMany({
+      include: { store: true },
+      orderBy: { createdAt: 'desc' }
     })
   ]);
 
+  // Poin 6: Penamaan Jumlah SP Aktif & Jumlah SP Non Aktif (tetap menyimpan key lama sebagai alias)
   const storeSp = spStoreRecords.reduce(
     (acc, r) => {
       acc.total += r.totalSpIssued;
+      acc.spAktif += r.tataTertibCount;
+      acc.spNonAktif += r.nonTataTertibCount;
       acc.tataTertib += r.tataTertibCount;
       acc.nonTataTertib += r.nonTataTertibCount;
       const brk = r.breakdown || {};
@@ -254,14 +261,14 @@ const getIndustrialAndSpSummary = async (year) => {
       }
       return acc;
     },
-    { total: 0, tataTertib: 0, nonTataTertib: 0, sp1: 0, sp2: 0, sp3: 0, barat: 0, timur: 0 }
+    { total: 0, spAktif: 0, spNonAktif: 0, tataTertib: 0, nonTataTertib: 0, sp1: 0, sp2: 0, sp3: 0, barat: 0, timur: 0 }
   );
 
-  let hqTataTertib = 0;
-  let hqNonTataTertib = 0;
+  let hqSpAktif = 0;
+  let hqSpNonAktif = 0;
   spHoCases.forEach(c => {
-    if (String(c.category || '').toUpperCase().includes('NON')) hqNonTataTertib++;
-    else hqTataTertib++;
+    if (String(c.category || '').toUpperCase().includes('NON')) hqSpNonAktif++;
+    else hqSpAktif++;
   });
 
   const countDisputes = (list) => {
@@ -276,24 +283,117 @@ const getIndustrialAndSpSummary = async (year) => {
     return res;
   };
 
-  return {
-    totalSpIssued: storeSp.total + spHoCases.length, // Metrik #27 Corporate
-    storeSp,                                         // Metrik #27 Store & Kartu SP
-    hqSp: {                                          // Metrik #27 HQ
-      total: spHoCases.length,
-      tataTertib: hqTataTertib,
-      nonTataTertib: hqNonTataTertib
+  // Poin 7: Matriks Perizinan Ketenagakerjaan (WLKP, PP, K3)
+  const today = new Date();
+  const thirtyDaysFromNow = new Date(today.getTime() + (30 * 24 * 60 * 60 * 1000));
+  const complianceKpi = { total: compliances.length, patuh: 0, akanJatuhTempo: 0, kadaluarsa: 0 };
+  const complianceByType = { wlkp: 0, pp: 0, k3: 0, lainnya: 0 };
+  const complianceList = [];
+
+  const summarizeComplianceScope = (items) => {
+    const res = { total: items.length, patuh: 0, akanJatuhTempo: 0, kadaluarsa: 0, wlkp: 0, pp: 0, k3: 0 };
+    items.forEach(item => {
+      if (item.status === 'KADALUARSA') res.kadaluarsa++;
+      else if (item.status === 'SEGERA HABIS') res.akanJatuhTempo++;
+      else res.patuh++;
+
+      const docUpper = String(item.area || '').toUpperCase();
+      if (docUpper.includes('WLKP')) res.wlkp++;
+      else if (docUpper.includes('PP') || docUpper.includes('PERATURAN PERUSAHAAN')) res.pp++;
+      else if (docUpper.includes('K3') || docUpper.includes('GENSET') || docUpper.includes('LISTRIK')) res.k3++;
+    });
+    return res;
+  };
+
+  compliances.forEach(c => {
+    let statusKalkulasi = c.status || 'PATUH';
+    let liveRemainingDays = c.remainingDays ?? 0;
+
+    if (c.validUntil) {
+      const expiry = new Date(c.validUntil);
+      liveRemainingDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+      if (expiry < today) {
+        statusKalkulasi = 'KADALUARSA';
+        complianceKpi.kadaluarsa++;
+      } else if (expiry <= thirtyDaysFromNow) {
+        statusKalkulasi = 'SEGERA HABIS';
+        complianceKpi.akanJatuhTempo++;
+      } else {
+        statusKalkulasi = 'PATUH';
+        complianceKpi.patuh++;
+      }
+    } else {
+      if (statusKalkulasi === 'KADALUARSA') complianceKpi.kadaluarsa++;
+      else if (statusKalkulasi === 'SEGERA HABIS') complianceKpi.akanJatuhTempo++;
+      else complianceKpi.patuh++;
+    }
+
+    const docUpper = String(c.documentType || '').toUpperCase();
+    if (docUpper.includes('WLKP')) complianceByType.wlkp++;
+    else if (docUpper.includes('PP') || docUpper.includes('PERATURAN PERUSAHAAN')) complianceByType.pp++;
+    else if (docUpper.includes('K3') || docUpper.includes('GENSET') || docUpper.includes('LISTRIK')) complianceByType.k3++;
+    else complianceByType.lainnya++;
+
+    const displayEntity = c.store?.storeName || c.location || c.entityName || 'HO';
+    const isHqDoc = !c.storeId && (String(displayEntity).toUpperCase() === 'HO' || String(displayEntity).toUpperCase().includes('HEAD OFFICE'));
+
+    complianceList.push({
+      id: c.id,
+      storeId: c.storeId || null,
+      isHq: isHqDoc,
+      area: c.documentType,
+      description: c.description || `Perizinan ${c.documentType} untuk ${displayEntity}`,
+      entity: displayEntity,
+      entityName: c.entityName || 'Biensi',
+      location: c.location || displayEntity,
+      validFrom: c.validFrom,
+      validUntil: c.validUntil,
+      pic: c.pic || '-',
+      remainingDays: Math.max(0, liveRemainingDays),
+      notes: c.notes || '-',
+      status: statusKalkulasi
+    });
+  });
+
+  const compliancePermits = {
+    kpi: complianceKpi,
+    byType: complianceByType,
+    byScope: {
+      corporate: summarizeComplianceScope(complianceList),
+      hq: summarizeComplianceScope(complianceList.filter(item => item.isHq)),
+      store: summarizeComplianceScope(complianceList.filter(item => !item.isHq))
     },
-    disputes: {                                      // Metrik #26 (Corporate, HQ, Store)
+    tableData: complianceList
+  };
+
+  return {
+    totalSpIssued: storeSp.total + spHoCases.length,
+    corporateSp: {
+      total: storeSp.total + spHoCases.length,
+      spAktif: storeSp.spAktif + hqSpAktif,
+      spNonAktif: storeSp.spNonAktif + hqSpNonAktif,
+      tataTertib: storeSp.tataTertib + hqSpAktif,
+      nonTataTertib: storeSp.nonTataTertib + hqSpNonAktif
+    },
+    storeSp,
+    hqSp: {
+      total: spHoCases.length,
+      spAktif: hqSpAktif,
+      spNonAktif: hqSpNonAktif,
+      tataTertib: hqSpAktif,
+      nonTataTertib: hqSpNonAktif
+    },
+    disputes: {
       corporate: countDisputes(irCases),
       hq: countDisputes(irCases.filter(c => !c.employee?.storeId)),
       store: countDisputes(irCases.filter(c => c.employee?.storeId))
     },
-    overdueContracts: {                              // Metrik #23 (Kontrak lewat jatuh tempo)
+    overdueContracts: {
       corporate: overdueContracts.length,
       hq: overdueContracts.filter(e => !e.storeId).length,
       store: overdueContracts.filter(e => e.storeId).length
-    }
+    },
+    compliancePermits
   };
 };
 

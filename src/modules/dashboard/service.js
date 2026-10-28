@@ -1,6 +1,19 @@
 const repository = require('./repository');
 const prisma = require('../../config/database');
 
+// Helper deteksi Gender agar kebal terhadap variasi penulisan ("Laki-laki", "Laki - Laki", "Pria", "L", "M")
+const isMaleGender = (rawGender) => {
+  const clean = String(rawGender || '').toUpperCase().replace(/[^A-Z]/g, '');
+  return (
+    clean.includes('LAKI') ||
+    clean.includes('PRIA') ||
+    clean.includes('MALE') ||
+    clean === 'L' ||
+    clean === 'M' ||
+    clean === 'LK'
+  );
+};
+
 // Helper untuk mengelompokkan populasi karyawan (dipakai oleh Corporate, HQ, dan Store)
 const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0) => {
   const refDate = new Date(Date.UTC(periodYear, periodMonth, 0));
@@ -9,8 +22,27 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
   let budgetCost = 0; let actualCost = 0;
 
   const byGender = { LAKI_LAKI: 0, PEREMPUAN: 0 };
-  const byAgeBracket = { under21: 0, age21To25: 0, age26To30: 0, age31To40: 0, over40: 0 };
-  const byTenureBracket = { under1Year: 0, tenure1To3Years: 0, tenure3To5Years: 0, over5Years: 0 };
+
+  // Poin 3: 7 Rentang Usia (<21, 21-25, 26-30, 31-40, 40-50, 50-60, >60)
+  const byAgeBracket = {
+    under21: 0,
+    age21To25: 0,
+    age26To30: 0,
+    age31To40: 0,
+    age40To50: 0,
+    age50To60: 0,
+    over60: 0
+  };
+
+  // Poin 4: 6 Rentang Masa Kerja (<1, 1-3, >3-5, >5-7, >7-10, >10 tahun)
+  const byTenureBracket = {
+    under1Year: 0,
+    tenure1To3Years: 0,
+    tenure3To5Years: 0,
+    tenure5To7Years: 0,
+    tenure7To10Years: 0,
+    over10Years: 0
+  };
 
   // 7 Level Jabatan
   const byLevelStandard = {
@@ -23,7 +55,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     staffCrew: 0         // #17 Staff / Crew / Cashier / SA
   };
 
-  // 4 Tipe Kontrak 
+  // 4 Tipe Kontrak
   const byEmploymentStandard = {
     pkwtt: 0,      // #18 Fulltime (TETAP)
     pkwt: 0,       // #19 Contract (KONTRAK)
@@ -47,11 +79,11 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     budgetCost += bud;
     actualCost += act;
 
-    // Gender 
-    if (String(emp.gender || '').toUpperCase().includes('LAKI')) byGender.LAKI_LAKI++;
+    // Poin 2: Gender
+    if (isMaleGender(emp.gender)) byGender.LAKI_LAKI++;
     else byGender.PEREMPUAN++;
 
-    // Usia
+    // Poin 3: Usia (7 Kategori)
     let ageVal = null;
     if (emp.birthDate) {
       ageVal = periodYear - new Date(emp.birthDate).getFullYear();
@@ -62,11 +94,13 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
         else if (ageVal <= 25) byAgeBracket.age21To25++;
         else if (ageVal <= 30) byAgeBracket.age26To30++;
         else if (ageVal <= 40) byAgeBracket.age31To40++;
-        else byAgeBracket.over40++;
+        else if (ageVal <= 50) byAgeBracket.age40To50++;
+        else if (ageVal <= 60) byAgeBracket.age50To60++;
+        else byAgeBracket.over60++;
       }
     }
 
-    // Masa Kerja 
+    // Poin 4: Masa Kerja (6 Kategori)
     let tenureVal = null;
     if (emp.joinDate) {
       tenureVal = Math.max(0, (refDate - new Date(emp.joinDate)) / (1000 * 60 * 60 * 24 * 365.25));
@@ -75,10 +109,12 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
       if (tenureVal < 1) byTenureBracket.under1Year++;
       else if (tenureVal <= 3) byTenureBracket.tenure1To3Years++;
       else if (tenureVal <= 5) byTenureBracket.tenure3To5Years++;
-      else byTenureBracket.over5Years++;
+      else if (tenureVal <= 7) byTenureBracket.tenure5To7Years++;
+      else if (tenureVal <= 10) byTenureBracket.tenure7To10Years++;
+      else byTenureBracket.over10Years++;
     }
 
-    // Klasifikasi Level Jabatan 
+    // Klasifikasi Level Jabatan
     const lvlStr = `${emp.position?.employeeLevel || ''} ${emp.position?.name || ''}`.toUpperCase();
     let groupKey = 'staff';
 
@@ -115,7 +151,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
       posGroupAcc[groupKey].tenCnt++;
     }
 
-    // Klasifikasi Tipe Kontrak 
+    // Klasifikasi Tipe Kontrak
     const empTypeStr = String(emp.employmentType || '').toUpperCase();
     if (empTypeStr.includes('TETAP') || empTypeStr.includes('PKWTT')) byEmploymentStandard.pkwtt++;
     else if (empTypeStr.includes('KONTRAK') || empTypeStr.includes('PKWT')) byEmploymentStandard.pkwt++;
@@ -208,7 +244,7 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
   const distribution = {
     byDivision: {},
     byDepartment: {},
-    byGender: {},
+    byGender: { 'LAKI-LAKI': 0, PEREMPUAN: 0 },
     byEmploymentType: {},
     byEmployeeLevel: activeScopeStats.byLevelStandard,
     byAgeBracket: activeScopeStats.byAgeBracket,
@@ -247,12 +283,12 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
 
     const divName = emp.division?.name || 'Uncategorized';
     const deptName = emp.department?.name || 'Uncategorized';
-    const gender = emp.gender || 'Unknown';
+    const genderKey = isMaleGender(emp.gender) ? 'LAKI-LAKI' : 'PEREMPUAN';
     const status = emp.employmentType || 'Unknown';
 
     distribution.byDivision[divName] = (distribution.byDivision[divName] || 0) + 1;
     distribution.byDepartment[deptName] = (distribution.byDepartment[deptName] || 0) + 1;
-    distribution.byGender[gender] = (distribution.byGender[gender] || 0) + 1;
+    distribution.byGender[genderKey] = (distribution.byGender[genderKey] || 0) + 1;
     distribution.byEmploymentType[status] = (distribution.byEmploymentType[status] || 0) + 1;
 
     if (!costDistribution.byDivision[divName]) {
@@ -355,7 +391,7 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
         totalHeadcount: totalHeadcount,
         ratioText: prodHeadcount > 0 ? `Ratio 1 : ${prodRatioDenominator}` : 'Ratio 0 : 0',
         ratioDecimal: prodRatioDecimal,
-        targetDecimal: prodTarget,         
+        targetDecimal: prodTarget,
         isTargetAchieved: prodHeadcount > 0 && prodRatioDecimal <= prodTarget
       },
 
@@ -367,7 +403,7 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
       totalResigned: 0,
       turnoverRate: '0%'
     },
-    scopeBreakdown 
+    scopeBreakdown
   };
 };
 
@@ -665,7 +701,6 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
         },
         monthlyTrend: orderedTrend,
         positionSpeed: formatRank(positionCountMap).slice(0, 5),
-        // [TAMBAHAN METRIK #5]:
         scopeBreakdown: {
           corporate: calcSplit(allMovementsForMatrix),
           hq: calcSplit(allMovementsForMatrix.filter(m => m.storeId === null)),
@@ -679,7 +714,6 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
       },
       contractWatch: {
         expiringCount: expiringContracts.length,
-        // [TAMBAHAN METRIK #22]: Pemisahan jumlah kontrak habis <= 30 hari untuk Corporate, HQ, Store
         expiringByScope: {
           corporate: allExpiringForMatrix.length,
           hq: allExpiringForMatrix.filter(e => !e.storeId).length,
@@ -711,7 +745,7 @@ const getMainExecutiveDashboard = async (filters = {}) => {
     throw new Error(`Data periode untuk ${month}-${year} belum tersedia di sistem.`);
   }
 
-  // Jalankan secara paralel (termasuk menarik ringkasan SP & Hubungan Industrial untuk Metrik #23, #26, #27)
+  // Jalankan secara paralel (termasuk menarik ringkasan SP, Hubungan Industrial, & Perizinan WLKP/PP/K3)
   const [summaryData, storeData, turnoverData, industrialAndSp] = await Promise.all([
     getDashboardSummary(period.id, scope),
     getStorePerformanceDashboard(period.id, year),
@@ -733,7 +767,8 @@ const getMainExecutiveDashboard = async (filters = {}) => {
     summary: summaryData,
     storePerformance: storeData.data,
     turnoverAndRetention: turnoverData.data,
-    industrialAndSp // <--- Tambahan untuk Kartu Kanan Bawah & Metrik #23, #26, #27
+    industrialAndSp,
+    compliance: industrialAndSp.compliancePermits // Tersedia juga di root agar mudah diakses FE untuk Matriks #25
   };
 };
 

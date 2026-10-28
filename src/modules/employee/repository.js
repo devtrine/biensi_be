@@ -10,12 +10,31 @@ const normalizeText = (val) => {
   return clean;
 };
 
-// Helper: Normalisasi Gender ("LAKI - LAKI" -> "LAKI-LAKI")
+// Normalisasi Gender Jika Ada typo pada import file
 const normalizeGender = (val) => {
   if (!val) return null;
-  const clean = String(val).replace(/\s+/g, '').toUpperCase();
-  if (clean.includes('LAKI')) return 'LAKI-LAKI';
-  if (clean.includes('PEREMPUAN') || clean.includes('WANITA')) return 'PEREMPUAN';
+  const clean = String(val).replace(/[^a-zA-Z]/g, '').toUpperCase();
+  if (
+    clean.includes('LAKI') ||
+    clean.includes('PRIA') ||
+    clean.includes('MALE') ||
+    clean === 'L' ||
+    clean === 'LK' ||
+    clean === 'M'
+  ) {
+    return 'LAKI-LAKI';
+  }
+  if (
+    clean.includes('PEREMPUAN') ||
+    clean.includes('WANITA') ||
+    clean.includes('FEMALE') ||
+    clean === 'P' ||
+    clean === 'PR' ||
+    clean === 'W' ||
+    clean === 'F'
+  ) {
+    return 'PEREMPUAN';
+  }
   return clean;
 };
 
