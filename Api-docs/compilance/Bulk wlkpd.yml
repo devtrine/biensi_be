@@ -12,7 +12,7 @@ http:
       - name: file
         type: file
         value:
-          - C:\yt-dlp\wlkpd.xlsx
+          - C:\yt-dlp\wlkp_new.xlsx
         contentType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
   auth: inherit
 

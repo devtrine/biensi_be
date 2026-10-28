@@ -72,8 +72,8 @@ const getTurnoverDashboard = async (req, res) => {
     // 1. Ambil waktu saat ini sebagai default (Fallback)
     const currentDate = new Date();
     const defaultYear = currentDate.getFullYear();
-    const defaultMonth = currentDate.getMonth() + 1; // getMonth() mulai dari 0
-
+    const defaultMonth = currentDate.getMonth() + 1;
+    
     // 2. Tangkap parameter dari URL query (?year=2026&month=12)
     const year = parseInt(req.query.year) || defaultYear;
     const month = parseInt(req.query.month) || defaultMonth;

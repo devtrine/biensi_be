@@ -10,10 +10,6 @@ const importBulkSP = async (req, res) => {
     }
 
     const result = await service.importBulkSP(req.file.path);
-    
-    // Hapus file sementara setelah diproses
-    // fs.unlinkSync(req.file.path);
-
     res.status(200).json({
       success: true,
       message: `Import SP Selesai! Sukses: ${result.successCount}, Gagal: ${result.failCount}`,
@@ -33,10 +29,6 @@ const importBulkFraud = async (req, res) => {
     }
 
     const result = await service.importBulkFraud(req.file.path);
-    
-    // Hapus file sementara setelah diproses
-    // fs.unlinkSync(req.file.path);
-
     res.status(200).json({
       success: true,
       message: `Import Fraud Selesai! Sukses: ${result.successCount}, Gagal: ${result.failCount}`,
@@ -53,10 +45,7 @@ const importBulkBipartit = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "File Excel Bipartit tidak ditemukan." });
     }
-
     const result = await service.importBulkBipartit(req.file.path);
-    // fs.unlinkSync(req.file.path); // Bersihkan file bekas
-
     res.status(200).json({
       success: true,
       message: `Import Bipartit Selesai! Sukses: ${result.successCount}, Gagal: ${result.failCount}`,
@@ -97,10 +86,9 @@ const getSpTokoRekap = async (req, res) => {
   }
 };
 
-// === 3. GET ALL CASES ===
 const getAllCases = async (req, res) => {
   try {
-    const filters = req.query; // Ambil filter dari query params jika ada
+    const filters = req.query;
     const data = await service.getAllCases(filters);
     res.status(200).json({ success: true, data });
   } catch (error) {
@@ -108,7 +96,6 @@ const getAllCases = async (req, res) => {
   }
 };
 
-// === 4. GET CASE BY ID ===
 const getCaseById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -121,7 +108,6 @@ const getCaseById = async (req, res) => {
   }
 };
 
-// === 5. DELETE CASE ===
 const deleteCase = async (req, res) => {
   try {
     const { id } = req.params;

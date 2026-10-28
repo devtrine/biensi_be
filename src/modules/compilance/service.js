@@ -1,20 +1,69 @@
 const xlsx = require('xlsx');
 const repository = require('./repository');
 
-const parseExcelDate = (serial) => {
-  if (!serial) return null;
-  let date = typeof serial === 'string' ? new Date(serial) : new Date((serial - 25569) * 86400 * 1000);
+// Parser tanggal tangguh: mendukung Excel Serial Number, YYYY-MM-DD, dan "04-Oct-26" / "04-Okt-26"
+const parseExcelDate = (val) => {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+
+  if (typeof val === 'number') {
+    const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  let str = String(val).trim();
+  if (!str || str === '-' || str === '0') return null;
+
+  // Normalisasi singkatan bulan
+  const indoMonths = {
+    JANUARI: 'Jan', FEBRUARI: 'Feb', MARET: 'Mar', APRIL: 'Apr', MEI: 'May', JUNI: 'Jun',
+    JULI: 'Jul', AGUSTUS: 'Aug', SEPTEMBER: 'Sep', OKTOBER: 'Oct', NOVEMBER: 'Nov', DESEMBER: 'Dec',
+    AGU: 'Aug', AGT: 'Aug', OKT: 'Oct', DES: 'Dec', PEB: 'Feb'
+  };
+  Object.keys(indoMonths).forEach(indo => {
+    const regex = new RegExp(`\\b${indo}\\b`, 'gi');
+    str = str.replace(regex, indoMonths[indo]);
+  });
+
+  // regregator tanggal
+  str = str.replace(/^(\d{1,2})[-/\s]([A-Za-z]{3})[-/\s](\d{2})$/, '$1 $2 20$3');
+
+  const date = new Date(str);
   return isNaN(date.getTime()) ? null : date;
+};
+
+// Sinonim Header Bahasa and prevent Urutan Kolom Tertukar
+const HEADER_ALIASES = {
+  entityName: ['PERUSAHAAN', 'ENTITAS', 'COMPANY', 'ENTITY'],
+  permitType: ['JENISPERIJINAN', 'JENISPERIZINAN', 'JENISDOKUMEN', 'PERMITTYPE', 'DOCUMENTTYPE', 'CATEGORY', 'JENIS'],
+  storeName: ['NAMATOKO', 'STORENAME', 'SHOWROOM', 'CABANG', 'BRANCH', 'UNITKERJA'],
+  documentName: ['DOKUMEN/PERIZINAN', 'DOKUMEN/PERIJINAN', 'NAMADOKUMEN', 'DOCUMENTNAME', 'INSTRUMEN', 'DOKUMEN', 'PERIZINAN'],
+  location: ['LOKASI', 'LOCATION', 'WILAYAH', 'TEMPAT', 'SITE'],
+  validFrom: ['TANGGALTERBIT', 'TGLTERBIT', 'TGLAWAL', 'PERIODEAWAL', 'ISSUEDATE', 'STARTDATE', 'VALIDFROM', 'EFFECTIVE'],
+  validUntil: ['TANGGALBERAKHIR', 'TGLBERAKHIR', 'TGLAKHIR', 'PERIODEAKHIR', 'EXPIRYDATE', 'EXPIREDDATE', 'ENDDATE', 'VALIDUNTIL', 'JATUHTEMPO'],
+  pic: ['PIC', 'PERSONINCHARGE', 'PENANGGUNGJAWAB'],
+  status: ['STATUS', 'STATE', 'KONDISI'],
+  remainingDays: ['SISAHARI', 'REMAININGDAYS', 'DAYSLEFT', 'SISAWAKTU'],
+  notes: ['KETERANGAN', 'NOTES', 'REMARKS', 'CATATAN', 'DESKRIPSI']
+};
+
+const matchHeaderField = (normCell) => {
+  for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
+    if (aliases.some(alias => normCell === alias || normCell.includes(alias))) {
+      return field;
+    }
+  }
+  return null;
 };
 
 const importComplianceData = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
-  let allData = []; 
+  const allData = [];
 
-  // Saring sheet untuk kepatuhan (WLKP, perizinan, dsb)
+  // Filter sheet perizinan/kepatuhan
   let targetSheets = workbook.SheetNames.filter(name => {
     const lower = name.toLowerCase();
-    return lower.includes('wlkp') || lower.includes('compliance') || lower.includes('kepatuhan') || lower.includes('perizinan');
+    return lower.includes('wlkp') || lower.includes('compliance') || lower.includes('kepatuhan') || lower.includes('perizinan') || lower.includes('perijinan');
   });
 
   if (targetSheets.length === 0) {
@@ -22,94 +71,86 @@ const importComplianceData = async (filePath) => {
       const lower = name.toLowerCase();
       return !lower.includes('demografi') && !lower.includes('turnover') && !lower.includes('kehadiran') &&
              !lower.includes('sales') && !lower.includes('fraud') && !lower.includes('kasus') &&
-             !lower.includes('sp') && !lower.includes('phase') && !lower.includes('critical') && !lower.includes('visual');
+             !lower.includes('sp') && !lower.includes('phase') && !lower.includes('recruitment');
     });
   }
-
-  if (targetSheets.length === 0) {
-    targetSheets = [workbook.SheetNames[0]];
-  }
+  if (targetSheets.length === 0) targetSheets = [workbook.SheetNames[0]];
 
   for (const sheetName of targetSheets) {
     const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
     if (rawMatrix.length === 0) continue;
 
-    let col = {}; 
-    let headerRowIndex = 0;
+    let listHeaderRow = -1;
+    const listColMap = {};
 
-    // 1. MATRIX SCANNER CANGGIH (Anti-Tertukar Tgl Akhir)
-    for (let r = 0; r < Math.min(10, rawMatrix.length); r++) {
+    // 1. Dinamis cari baris header format 12 kolom
+    for (let r = 0; r < Math.min(15, rawMatrix.length); r++) {
       const row = rawMatrix[r] || [];
-      for (let c = 0; c < row.length; c++) {
-        const cell = String(row[c] || '').toUpperCase().replace(/\s+/g, '');
-        if (!cell) continue;
+      const tempMap = {};
 
-        if (cell.includes('STORENAME') && col.store === undefined) {
-          col.store = c; headerRowIndex = r; 
+      for (let c = 0; c < row.length; c++) {
+        const cellTop = String(row[c] || '').toUpperCase().replace(/\s+/g, '');
+        const cellSub = String((rawMatrix[r + 1] || [])[c] || '').toUpperCase().replace(/\s+/g, '');
+        const combined = cellTop || cellSub;
+        if (!combined) continue;
+
+        const matchedField = matchHeaderField(cellTop);
+        if (matchedField && tempMap[matchedField] === undefined) {
+          tempMap[matchedField] = c;
         }
-        
-        // Kita tangkap Judul Utamanya, lalu kunci indeks kolom tanggalnya (Index Offset)
-        if (cell.includes('PERATURANPERUSAHAAN') || cell === 'PP') {
-          col.ppAwal = c; col.ppAkhir = c + 1;
-        }
-        else if (cell.includes('WLKP')) {
-          col.wlkpAwal = c; col.wlkpAkhir = c + 1;
-        }
-        else if (cell.includes('BPJSKETENAGAKERJAAN')) {
-          // Karena kolom pertamanya Jml Terdaftar, maka Tgl Awal bergeser ke c+1
-          col.bpjsAwal = c + 1; col.bpjsAkhir = c + 2; 
-        }
-        else if (cell === 'GENSET') {
-          col.gensetAwal = c; col.gensetAkhir = c + 1;
-        }
-        else if (cell.includes('INSTALASILISTRIK') || cell.includes('PENYALURLISTRIK')) {
-          col.listrikAwal = c; col.listrikAkhir = c + 1;
-        }
+      }
+
+      if (tempMap.permitType !== undefined || tempMap.documentName !== undefined) {
+        listHeaderRow = r;
+        Object.assign(listColMap, tempMap);
+        break;
       }
     }
 
-    const hasComplianceCols = col.ppAwal !== undefined || col.wlkpAwal !== undefined || col.bpjsAwal !== undefined || col.gensetAwal !== undefined || col.listrikAwal !== undefined;
-    if (col.store === undefined || !hasComplianceCols) continue;
+    if (listHeaderRow === -1) continue;
 
-    // 2. EKSTRAK DATA PER TOKO
-    for (let r = headerRowIndex + 1; r < rawMatrix.length; r++) {
+    // Ekstrak baris data di bawah header
+    for (let r = listHeaderRow + 1; r < rawMatrix.length; r++) {
       const row = rawMatrix[r] || [];
-      const storeName = row[col.store];
-      
-      // Abaikan baris kosong atau baris sub-header
-      if (!storeName || String(storeName).toUpperCase().includes('STORE') || String(storeName).includes('Tgl')) continue;
+      const rawPermitType = listColMap.permitType !== undefined ? row[listColMap.permitType] : null;
+      const rawDocName = listColMap.documentName !== undefined ? row[listColMap.documentName] : null;
+      const rawStoreName = listColMap.storeName !== undefined ? row[listColMap.storeName] : null;
+      const rawLocation = listColMap.location !== undefined ? row[listColMap.location] : null;
 
-      let documents = [];
+      if (!rawPermitType && !rawDocName && !rawStoreName) continue;
 
-      // Susun Dokumen Peraturan Perusahaan
-      if (col.ppAwal !== undefined && (row[col.ppAwal] || row[col.ppAkhir])) {
-         documents.push({ type: 'Peraturan Perusahaan (PP)', validFrom: parseExcelDate(row[col.ppAwal]), validUntil: parseExcelDate(row[col.ppAkhir]) });
-      }
-      // Susun Dokumen WLKP
-      if (col.wlkpAwal !== undefined && (row[col.wlkpAwal] || row[col.wlkpAkhir])) {
-         documents.push({ type: 'WLKP Kemnaker', validFrom: parseExcelDate(row[col.wlkpAwal]), validUntil: parseExcelDate(row[col.wlkpAkhir]) });
-      }
-      // Susun Dokumen BPJS Ketenagakerjaan
-      if (col.bpjsAwal !== undefined && (row[col.bpjsAwal] || row[col.bpjsAkhir])) {
-         documents.push({ type: 'BPJS Ketenagakerjaan', validFrom: parseExcelDate(row[col.bpjsAwal]), validUntil: parseExcelDate(row[col.bpjsAkhir]) });
-      }
-      // Susun Dokumen Genset
-      if (col.gensetAwal !== undefined && (row[col.gensetAwal] || row[col.gensetAkhir])) {
-         documents.push({ type: 'Sertifikasi Genset', validFrom: parseExcelDate(row[col.gensetAwal]), validUntil: parseExcelDate(row[col.gensetAkhir]) });
-      }
-      // Susun Dokumen Instalasi Listrik
-      if (col.listrikAwal !== undefined && (row[col.listrikAwal] || row[col.listrikAkhir])) {
-         documents.push({ type: 'Instalasi Listrik', validFrom: parseExcelDate(row[col.listrikAwal]), validUntil: parseExcelDate(row[col.listrikAkhir]) });
-      }
+      const permitType = String(rawPermitType || rawDocName || 'Perijinan').trim();
+      if (permitType.toUpperCase().includes('JENIS PERIJINAN')) continue;
 
-      // Jika toko ini punya minimal 1 dokumen, masukkan ke antrean
-      if (documents.length > 0) {
-          allData.push({ storeName, documents });
-      }
+      const storeName = rawStoreName ? String(rawStoreName).trim() : null;
+      const location = rawLocation ? String(rawLocation).trim() : (storeName || 'HO');
+      const rawSisaHari = listColMap.remainingDays !== undefined ? parseInt(row[listColMap.remainingDays], 10) : 0;
+
+      allData.push({
+        storeName,
+        location,
+        entityName: listColMap.entityName !== undefined && row[listColMap.entityName] ? String(row[listColMap.entityName]).trim() : 'Biensi',
+        documents: [
+          {
+            type: permitType,
+            description: rawDocName ? String(rawDocName).trim() : permitType,
+            location,
+            validFrom: listColMap.validFrom !== undefined ? parseExcelDate(row[listColMap.validFrom]) : null,
+            validUntil: listColMap.validUntil !== undefined ? parseExcelDate(row[listColMap.validUntil]) : null,
+            pic: listColMap.pic !== undefined && row[listColMap.pic] ? String(row[listColMap.pic]).trim() : null,
+            rawStatus: listColMap.status !== undefined && row[listColMap.status] ? String(row[listColMap.status]).trim() : 'Aktif',
+            remainingDays: isNaN(rawSisaHari) ? 0 : rawSisaHari,
+            notes: listColMap.notes !== undefined && row[listColMap.notes] ? String(row[listColMap.notes]).trim() : null
+          }
+        ]
+      });
     }
   }
 
-  if (allData.length === 0) throw new Error("Gagal membaca data. Pastikan format tabel memiliki kolom Store Name dan jenis kepatuhan.");
+  if (allData.length === 0) {
+    throw new Error('Gagal membaca data. Pastikan format tabel memiliki kolom Jenis Perijinan / Nama Toko yang valid.');
+  }
+
   return await repository.processBulkCompliance(allData);
 };
 

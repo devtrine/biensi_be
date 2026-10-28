@@ -367,13 +367,10 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
       totalResigned: 0,
       turnoverRate: '0%'
     },
-    scopeBreakdown // [TAMBAHAN METRIKS #1-#21 & #28-#39]: Berisi { corporate, hq, store } siap pakai!
+    scopeBreakdown 
   };
 };
 
-// ============================================================================
-// 2. FUNGSI SAKTI 2: STORE PERFORMANCE (DITAMBAH METRIK #39 BY STORE TYPE)
-// ============================================================================
 const getStorePerformanceDashboard = async (periodId, year = null) => {
   const salesData = await repository.getSalesByPeriod(periodId, year);
   const employees = await repository.getActiveEmployeesForSnapshot();
@@ -402,7 +399,7 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
     TIMUR: { storeCount: 0, headcount: 0, totalAge: 0, validAgeCount: 0, totalTenure: 0, validTenureCount: 0, sales: 0, target: 0 }
   };
 
-  // [TAMBAHAN METRIK #39]: Akumulator Labour Cost vs Sales per Tipe Toko (Family Store, Showroom, Counter)
+  // Akumulator Labour Cost vs Sales per Tipe Toko (Family Store, Showroom, Counter)
   const storeTypeAcc = {
     'FAMILY STORE': { sales: 0, cost: 0 },
     'SHOWROOM': { sales: 0, cost: 0 },

@@ -305,7 +305,6 @@ const getTurnoverDashboard = async (year, month) => {
   };
 };
 
-// === CRUD EXPORTS ===
 const getAllMovements = async (filters) => await repository.getAllMovements(filters);
 const getMovementById = async (id) => await repository.getMovementById(id);
 const createMovement = async (data) => await repository.createMovement(data);

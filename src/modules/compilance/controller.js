@@ -1,7 +1,6 @@
 const service = require('./service');
 const fs = require('fs');
 
-// === 1. IMPORT DATA KEPATUHAN (EXCEL) ===
 const importCompliance = async (req, res) => {
   try {
     if (!req.file) {
@@ -24,7 +23,6 @@ const importCompliance = async (req, res) => {
   }
 };
 
-// === 2. GET DASHBOARD DATA (UNTUK UI) ===
 const getDashboardOverview = async (req, res) => {
   try {
     const data = await service.getDashboardData();

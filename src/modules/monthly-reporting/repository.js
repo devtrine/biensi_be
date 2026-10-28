@@ -23,10 +23,10 @@ const getAllPeriods = async () => {
 const getAllAttendance = async () => {
   return await prisma.attendanceAggregateMonthly.findMany({
     include: { 
-      period: true // Agar tahu ini absensi bulan apa
+      period: true
     },
     orderBy: { 
-      period: { periodStart: 'desc' } // Urutkan dari bulan terbaru ke terlama
+      period: { periodStart: 'desc' } 
     }
   });
 };
@@ -38,13 +38,13 @@ const getAllSales = async () => {
       store: true // Tampilkan info bulan dan info toko sekaligus
     },
     orderBy: [
-      { period: { periodStart: 'desc' } }, // Urutkan bulan dulu
-      { netSales: 'desc' }                 // Lalu urutkan sales tertinggi di bulan itu
+      { period: { periodStart: 'desc' } },
+      { netSales: 'desc' }
     ]
   });
 };
 
-// --- 2. SNAPSHOT CLONING ENGINE ---
+// SNAPSHOT CLONING ENGINE
 const getActiveEmployeesForSnapshot = async (scope = 'ALL') => {
   const whereClause = {
     status: 'ACTIVE',
@@ -55,9 +55,9 @@ const getActiveEmployeesForSnapshot = async (scope = 'ALL') => {
 
   // 2. Pisahkan HO vs Toko secara otomatis sesuai kebutuhan pemanggil!
   if (scope === 'STORE') {
-    whereClause.storeId = { not: null }; // Murni 19 karyawan Toko
+    whereClause.storeId = { not: null };
   } else if (scope === 'HQ') {
-    whereClause.storeId = null;          // Murni 22 karyawan HO
+    whereClause.storeId = null;
   }
 
   return await prisma.employee.findMany({
@@ -109,12 +109,10 @@ const getOrCreateStore = async (storeName) => {
     store = await prisma.store.create({
       data: {
         storeName: cleanName,
-        storeCode: `STR-${Date.now()}` // Generate kode otomatis agar Prisma tidak error
+        storeCode: `STR-${Date.now()}`
       }
     });
   }
-  
-  // 3. Kembalikan ID-nya saja
   return store.id;
 };
 
@@ -139,7 +137,7 @@ const bulkCreateSales = async (dataArray) => {
   return await prisma.salesMonthly.createMany({ data: dataArray, skipDuplicates: true });
 };
 
-// --- 4. DASHBOARD AGGREGATION QUERIES ---
+// DASHBOARD AGGREGATION QUERIES
 const getSnapshotsByPeriod = async (periodId) => {
   return await prisma.employeeMonthlySnapshot.findMany({ where: { periodId } });
 };
@@ -156,8 +154,6 @@ const getAttendanceByPeriod = async (periodId, scope = null) => {
   if (scope && scope.toUpperCase() !== 'CORPORATE') {
     whereClause.scope = scope.toUpperCase().includes('HQ') ? 'HQ' : 'STORE';
   }
-
-  // ✅ Ganti findUnique menjadi findFirst agar tidak error 500
   return await prisma.attendanceAggregateMonthly.findFirst({
     where: whereClause,
     orderBy: { createdAt: 'desc' }

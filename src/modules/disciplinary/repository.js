@@ -111,7 +111,7 @@ const findOrCreatePeriod = async (year, month, monthName) => {
   return period;
 };
 
-// === 1. PROCESS BULK SP (TOKO & HO) - ANTI REDUNDAN + AUTO-INACTIVE JIKA PHK ===
+// BULK SP (TOKO & HO) - ANTI REDUNDAN + AUTO-INACTIVE JIKA PHK
 const processBulkSP = async (parsedData) => {
   let successCount = 0; let errorList = [];
 
@@ -272,7 +272,7 @@ const processBulkFraud = async (parsedData) => {
         });
       }
 
-      // ✅ EFEK DOMINO OTOMATIS: Jika sanksi dari temuan Fraud adalah PHK, langsung nonaktifkan karyawan!
+      // Jika sanksi dari temuan Fraud adalah PHK, langsung nonaktifkan karyawan!
       if (discType.toUpperCase().includes('PHK')) {
         await prisma.employee.update({
           where: { id: rel.employeeId },

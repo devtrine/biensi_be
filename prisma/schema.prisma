@@ -133,16 +133,23 @@ model Store {
 }
 
 model StoreCompliance {
-  id           String    @id @default(uuid()) @db.Uuid
-  storeId      Int       @map("store_id")
-  documentType String    @map("document_type") @db.VarChar(50)
-  status       String?   @db.VarChar(50) // Tambahan: PATUH, KADALUARSA, dll
-  validFrom    DateTime? @map("valid_from") @db.Date  // JADIKAN OPSIONAL (?)
-  validUntil   DateTime? @map("valid_until") @db.Date // JADIKAN OPSIONAL (?)
-  description  String?   @db.Text // Tambahan untuk menyimpan "Deskripsi Instrumen" seperti di UI
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  id            String    @id @default(uuid()) @db.Uuid
+  storeId       Int?      @map("store_id")
+  documentType  String    @map("document_type") @db.VarChar(100)
+  status        String?   @db.VarChar(50)
+  validFrom     DateTime? @map("valid_from") @db.Date
+  validUntil    DateTime? @map("valid_until") @db.Date
+  description   String?   @db.Text
+  // Update format baru
+  entityName    String?   @map("entity_name") @db.VarChar(100)
+  location      String?   @map("location") @db.VarChar(100)
+  pic           String?   @map("pic") @db.VarChar(100)
+  remainingDays Int?      @default(0) @map("remaining_days")
+  notes         String?   @map("notes") @db.Text
 
-  store Store @relation(fields: [storeId], references: [id])
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  store         Store?    @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
   @@map("store_compliances")
 }
 
@@ -193,18 +200,11 @@ model Employee {
 model EmployeeMovement {
   id                  String    @id @default(uuid()) @db.Uuid
   employeeId          String    @map("employee_id") @db.Uuid
-  
-  // Tipe pergerakan: 'VOLUNTARY' atau 'INVOLUNTARY'
   movementType        String    @map("movement_type") @db.VarChar(50) 
-  
   movementDate        DateTime  @map("movement_date") @db.Date
-  
   // Kategori alasan: 'RESIGN SOP', 'PHK', dll
   reasonCategory      String?   @map("reason_category") @db.VarChar(100) 
-  
   reasonDetail        String?   @map("reason_detail") @db.Text 
-  
-  // Kolom baru untuk memenuhi Mockup Dashboard HR
   clearanceStatus     String?   @map("clearance_status") @db.VarChar(50)
   backfillStatus      String?   @map("backfill_status") @db.VarChar(100)
   retentionAction     String?   @map("retention_action") @db.VarChar(255)

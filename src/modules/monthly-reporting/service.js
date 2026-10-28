@@ -2,7 +2,7 @@ const repository = require('./repository');
 const xlsx = require('xlsx');
 const prisma = require('../../config/database')
 
-// Utility: Hitung usia/masa kerja ke format Desimal
+// Hitung usia/masa kerja ke format Desimal
 const calculateYears = (startDate) => {
   if (!startDate) return null;
   const diffInMs = new Date() - new Date(startDate);
@@ -10,7 +10,7 @@ const calculateYears = (startDate) => {
   return parseFloat(years.toFixed(2));
 };
 
-// Tambahkan fungsi utility ini di service.js
+// Tambahkan fungsi utility
 const parseMonthYear = (monthStr) => {
   if (!monthStr) return null;
   const str = String(monthStr).toUpperCase().trim();
@@ -21,11 +21,9 @@ const parseMonthYear = (monthStr) => {
     'OKT': 10, 'OKTOBER': 10, 'NOV': 11, 'NOVEMBER': 11, 'DES': 12, 'DESEMBER': 12
   };
   
-  // Pisahkan berdasarkan spasi (meskipun spasinya ada banyak)
+  // Regregator berdasarkan spasi 
   const parts = str.split(/\s+/); 
   if (parts.length < 2) return null;
-  
-  // Ambil 2 kata terakhir
   const monthName = parts[parts.length - 2].replace(/[^A-Z]/g, ''); 
   const year = parseInt(parts[parts.length - 1]);
   
@@ -43,7 +41,7 @@ const getOrCreatePeriodId = async (year, month) => {
   return period.id;
 };
 
-// Utility: Parsing string BPJS ke Boolean
+// Parsing string BPJS ke Boolean
 const parseBpjs = (value) => {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') return value.toLowerCase().includes('terdaftar');
@@ -73,7 +71,6 @@ const getAllSales = async () => {
   return await repository.getAllSales();
 };
 
-// GET Attendance
 const getAttendance = async (periodId) => {
   const data = await repository.getAttendanceByPeriod(periodId);
   if (!data) {
@@ -82,7 +79,6 @@ const getAttendance = async (periodId) => {
   return data;
 };
 
-// GET Sales
 const getSales = async (periodId) => {
   const data = await repository.getSalesByPeriod(periodId);
   return data; // Kembalikan array kosong jika belum ada sales
@@ -110,7 +106,7 @@ const generateSnapshot = async (periodId) => {
       bpjsKetenagakerjaan: parseBpjs(emp.bpjsKetenagakerjaan),
       bpjsKesehatan: parseBpjs(emp.bpjsKesehatan),
       
-      // ---> PERUBAHAN: Integrasi Gaji dari Master Karyawan <---
+      // PERUBAHAN: Integrasi Gaji dari Master Karyawan
       budgetLabourCost: emp.baseSalary || 0, // Mengambil nilai dari tabel Employee
       actualLabourCost: null                 // Dikosongkan untuk diisi via Upload Actual
     };
@@ -120,7 +116,7 @@ const generateSnapshot = async (periodId) => {
   return { generated: result.count, totalEmployees: employees.length };
 };
 
-// 2. GANTI FUNGSI IMPORT ATTENDANCE & LABOUR COST
+// FUNGSI IMPORT ATTENDANCE & LABOUR COST
 const importAttendanceAggregate = async (rawData) => {
   let successCount = 0;
   let currentScope = 'HQ'; // Default tabel bagian atas adalah HQ
@@ -197,7 +193,7 @@ const importSales = async (periodId, rawData) => {
   return { imported: result.count };
 };
 
-// --- DASHBOARD AGGREGATION LAYER (THE SOURCE OF TRUTH COMBINER) ---
+// DASHBOARD AGGREGATION LAYER
 const getDashboardSummary = async (periodId) => {
   // 1. Ambil Data Dasar
   const period = await prisma.reportingPeriod.findUnique({ where: { id: periodId } });
@@ -403,7 +399,7 @@ const getStorePerformanceDashboard = async (periodId) => {
     return years > 0 ? years : null;
   };
 
-  // 3. Mapping Karyawan Toko & Demografi (Dengan Fallback Region agar semua 19 orang masuk BARAT/TIMUR)
+  // 3. Mapping Karyawan Toko & Demografi
   employees.forEach(emp => {
     const storeName = emp.store?.storeName || '';
     const region = inferRegion(storeName, emp.store?.region);
@@ -459,9 +455,9 @@ const getStorePerformanceDashboard = async (periodId) => {
     const storeType = inferStoreType(storeName, sale.store?.storeType);
     const actual = parseFloat(sale.netSales || 0);
 
-    // ✅ DUMMY TARGET GENERATOR (Sesuai arahan PM):
     // Jika targetSales di DB masih null/0, buat dummy target proporsional (antara 88% s/d 112% dari actual)
     // supaya persentase achievement di Leaderboard & Regional hidup dan bervariasi!
+    // masih bersifat di sistem dikarenakan belum dapat target sales aseli dari excel
     let target = parseFloat(sale.targetSales || 0);
     if (!target && actual > 0) {
       const multipliers = [0.90, 0.95, 1.02, 0.88, 1.05, 0.92, 1.08, 0.97, 1.12, 0.94];
@@ -482,7 +478,7 @@ const getStorePerformanceDashboard = async (periodId) => {
     const totalStaff = storeEmpStats.managers + storeEmpStats.staffs;
     const achPercent = target > 0 ? (actual / target) * 100 : 0;
 
-    // ✅ Tambahan sesuai gambar metrik: Komposisi Labour Cost per Store vs Sales
+    // Tambahan sesuai gambar metrik: Komposisi Labour Cost per Store vs Sales
     const storeLabourRatio = actual > 0 ? ((storeEmpStats.totalSalary / actual) * 100).toFixed(2) + '%' : '0%';
 
     leaderboard.push({
@@ -501,7 +497,7 @@ const getStorePerformanceDashboard = async (periodId) => {
     });
   });
 
-  // 5. Return JSON siap saji
+  // 5. Return JSON
   const formatRegion = (data) => ({
     storeCount: data.storeCount,
     headcount: data.headcount,

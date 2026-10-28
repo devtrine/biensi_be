@@ -113,7 +113,6 @@ const importBulkSP = async (filePath) => {
         else if (cell.includes('DISCIPLINESNAME')) { col.discName = c; dataStartRow = Math.max(dataStartRow, r + 1); }
         else if (cell.includes('STARTDATE')) col.startDate = c;
         else if (cell.includes('ENDDATE')) col.endDate = c;
-        // ✅ PENTING: Cek NONTATATERTIB dulu sebelum TATATERTIB agar tidak tertimpa!
         else if (cell.includes('NONTATATERTIB')) col.nonTataTertib = c;
         else if (cell.includes('TATATERTIB')) col.tataTertib = c;
         else if (cell === 'PERIODE') col.periode = c;
@@ -300,7 +299,7 @@ const importBulkBipartit = async (filePath) => {
       const ketText = col.ket !== undefined && row[col.ket] ? String(row[col.ket]).trim() : null;
       const ketUpper = String(ketText || '').toUpperCase();
 
-      // ✅ PERBAIKAN: Cek checklist kolom dulu; jika kosong semua (seperti di kasus.xlsx), baca dari teks Keterangan!
+      // PERBAIKAN: Cek checklist kolom dulu; jika kosong semua (seperti di kasus.xlsx), baca dari teks Keterangan!
       let category = 'Bipartit';
       if (col.bipartit !== undefined && row[col.bipartit]) category = 'Bipartit';
       else if (col.mediasi !== undefined && row[col.mediasi]) category = 'Mediasi';

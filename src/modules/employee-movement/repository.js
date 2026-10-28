@@ -251,7 +251,7 @@ const getExpiringContracts = async (targetDate) => {
     where: {
       endDate: { lte: targetDate, gt: new Date() },
       status: 'ACTIVE',
-      baseSalary: { not: null } // Pastikan hanya dari 41 karyawan aktif asli
+      baseSalary: { not: null } 
     },
     include: { store: true, position: true },
     orderBy: { endDate: 'asc' },
