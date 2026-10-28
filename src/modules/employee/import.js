@@ -104,7 +104,95 @@ const processExcelImport = async (filePath) => {
   }
 
   // Lempar data ke Repository!
-  return await repository.processBulkImport(formattedData);
+  const importResult = await repository.processBulkImport(formattedData);
+
+  // Auto-generate reporting periods & snapshots agar langsung tampil di Dashboard
+  await syncSnapshotsAfterEmployeeImport(workbook.SheetNames);
+
+  return importResult;
+};
+
+
+const detectMonthYear = (sheetNames) => {
+  const months = {
+    'jan': 1, 'januari': 1, 'feb': 2, 'februari': 2, 'mar': 3, 'maret': 3,
+    'apr': 4, 'april': 4, 'mei': 5, 'may': 5, 'jun': 6, 'juni': 6,
+    'jul': 7, 'juli': 7, 'agu': 8, 'agustus': 8, 'aug': 8,
+    'sep': 9, 'september': 9, 'okt': 10, 'oktober': 10, 'oct': 10,
+    'nov': 11, 'november': 11, 'des': 12, 'desember': 12, 'dec': 12
+  };
+
+  for (const name of sheetNames) {
+    const lower = name.toLowerCase();
+    for (const [mName, mNum] of Object.entries(months)) {
+      if (lower.includes(mName)) {
+        const matchYear = lower.match(/202\d|2\d/);
+        let year = 2026;
+        if (matchYear) {
+          year = matchYear[0].length === 2 ? 2000 + parseInt(matchYear[0], 10) : parseInt(matchYear[0], 10);
+        }
+        return { year, month: mNum };
+      }
+    }
+  }
+  return { year: 2026, month: 9 };
+};
+
+const syncSnapshotsAfterEmployeeImport = async (sheetNames) => {
+  try {
+    const prisma = require('../../config/database');
+    const { year: yr, month: m } = detectMonthYear(sheetNames);
+
+    // 1. Pastikan periode untuk bulan yang diimpor sudah ada
+    let period = await prisma.reportingPeriod.findFirst({
+      where: { year: yr, month: m }
+    });
+    if (!period) {
+      const periodStart = new Date(Date.UTC(yr, m - 1, 1));
+      const periodEnd = new Date(Date.UTC(yr, m, 0));
+      period = await prisma.reportingPeriod.create({
+        data: { year: yr, month: m, periodStart, periodEnd }
+      });
+    }
+
+    // 2. Ambil seluruh karyawan aktif dari master data
+    const activeEmployees = await prisma.employee.findMany({
+      where: { status: 'ACTIVE', gender: { not: null } },
+      include: { position: true }
+    });
+
+    if (activeEmployees.length === 0) return;
+
+    // 3. Sinkronkan snapshot HANYA untuk periode bulan yang diimpor
+    const snapRows = activeEmployees.map(emp => {
+      let status = 'ACTIVE';
+      if (emp.endDate && new Date(emp.endDate) < new Date(period.periodEnd)) status = 'INACTIVE';
+      return {
+        periodId: period.id,
+        employeeId: emp.id,
+        divisionId: emp.divisionId,
+        departmentId: emp.departmentId,
+        positionId: emp.positionId,
+        storeId: emp.storeId,
+        employeeLevel: emp.position?.employeeLevel || null,
+        employmentType: emp.employmentType,
+        ageYears: emp.birthDate ? (period.year - new Date(emp.birthDate).getFullYear()) : null,
+        tenureYears: emp.joinDate ? Math.max(0, (new Date(period.periodEnd) - new Date(emp.joinDate)) / (1000 * 60 * 60 * 24 * 365.25)) : null,
+        employmentStatus: status,
+        bpjsKetenagakerjaan: Boolean(emp.bpjsKetenagakerjaan),
+        bpjsKesehatan: Boolean(emp.bpjsKesehatan),
+        budgetLabourCost: emp.baseSalary || 0,
+        actualLabourCost: null
+      };
+    });
+
+    await prisma.employeeMonthlySnapshot.createMany({
+      data: snapRows,
+      skipDuplicates: true
+    });
+  } catch (err) {
+    console.error('Error auto-syncing snapshots after import:', err.message);
+  }
 };
 
 module.exports = { processExcelImport };

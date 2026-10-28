@@ -2,19 +2,27 @@ const prisma = require('../../config/database');
 
 // Ambil Periode berdasarkan Tahun & Bulan
 const getPeriodByDate = async (year, month) => {
-  const numYear = parseInt(year, 10);
-  const numMonth = parseInt(month, 10);
+  const numYear = parseInt(year, 10) || new Date().getFullYear();
+  const numMonth = parseInt(month, 10) || (new Date().getMonth() + 1);
 
   let period = await prisma.reportingPeriod.findFirst({
     where: { year: numYear, month: numMonth }
   });
 
+  // Jika database baru di-reset dan belum ada periode sama sekali
   if (!period) {
-    period = await prisma.reportingPeriod.findFirst({
-      where: { year: numYear },
-      orderBy: { month: 'desc' }
+    const periodStart = new Date(Date.UTC(numYear, numMonth - 1, 1));
+    const periodEnd = new Date(Date.UTC(numYear, numMonth, 0));
+    period = await prisma.reportingPeriod.create({
+      data: {
+        year: numYear,
+        month: numMonth,
+        periodStart,
+        periodEnd
+      }
     });
   }
+
   return period;
 };
 
@@ -39,29 +47,12 @@ const getMonthlySnapshots = async (periodId, year) => {
     }
   };
 
-  let snapshots = await prisma.employeeMonthlySnapshot.findMany({
+  const snapshots = await prisma.employeeMonthlySnapshot.findMany({
     where: { periodId },
     include: includeRel
   });
 
-  if (snapshots.length === 0 && year) {
-    const latestPeriodWithSnap = await prisma.reportingPeriod.findFirst({
-      where: {
-        year: parseInt(year, 10),
-        employeeSnaps: { some: {} }
-      },
-      orderBy: { month: 'desc' }
-    });
-
-    if (latestPeriodWithSnap) {
-      snapshots = await prisma.employeeMonthlySnapshot.findMany({
-        where: { periodId: latestPeriodWithSnap.id },
-        include: includeRel
-      });
-    }
-  }
-
-  return snapshots.filter(s => s.employee && s.employee.gender !== null && s.employee.baseSalary !== null);
+  return snapshots.filter(s => s.employee && s.employee.gender !== null);
 };
 
 const getLatestPeriodByYear = async (year) => {
