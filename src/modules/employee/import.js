@@ -227,7 +227,7 @@ const processExcelImport = async (filePath) => {
 
 const syncSnapshotsAfterEmployeeImport = async (formattedData, sheetNames) => {
   try {
-    // Kumpulkan semua periode unik (Tahun & Bulan) yang ada di file Excel yang di-upload
+    // 1. Kumpulkan semua periode unik (Tahun & Bulan) yang ada di baris file Excel yang di-upload
     const periodMap = new Map();
     for (const row of formattedData) {
       if (row.periodYear && row.periodMonth) {
@@ -241,14 +241,30 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData, sheetNames) => {
       periodMap.set(`${fallback.year}-${fallback.month}`, fallback);
     }
 
-    const activeEmployees = await prisma.employee.findMany({
-      where: { status: 'ACTIVE', gender: { not: null } },
-      include: { position: true }
+    // 2. Kumpulkan semua NIK yang ada di file Excel dan ambil data employee dari database
+    const empNos = Array.from(new Set(formattedData.map(r => String(r.employeeNo || '').trim().toUpperCase())));
+    const empNosWithStr = empNos.map(no => `${no}-STR`);
+
+    const matchingEmployees = await prisma.employee.findMany({
+      where: {
+        OR: [
+          { employeeNo: { in: empNos } },
+          { employeeNo: { in: empNosWithStr } }
+        ]
+      },
+      include: { position: true, store: true }
     });
 
-    if (activeEmployees.length === 0) return;
-    const activeEmpIds = activeEmployees.map(e => e.id);
+    const empMap = new Map();
+    for (const emp of matchingEmployees) {
+      empMap.set(emp.employeeNo.toUpperCase(), emp);
+    }
 
+    // Deteksi cakupan file yang diunggah secara keseluruhan
+    const overallHasStore = formattedData.some(r => r.storeName && r.storeName !== 'TOTAL');
+    const overallHasHO = formattedData.some(r => !r.storeName || r.storeName === 'TOTAL');
+
+    // 3. Loop per periode bulan yang ada di file Excel
     for (const { year: yr, month: m } of periodMap.values()) {
       let period = await prisma.reportingPeriod.findFirst({
         where: { year: yr, month: m }
@@ -262,10 +278,29 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData, sheetNames) => {
         });
       }
 
-      const snapRows = activeEmployees.map(emp => {
+      // Filter baris data KHUSUS yang tercatat pada bulan & tahun ini
+      const rowsForThisPeriod = formattedData.filter(r => r.periodYear === yr && r.periodMonth === m);
+
+      const seenEmpIds = new Set();
+      const snapRows = [];
+
+      for (const row of rowsForThisPeriod) {
+        const cleanNo = String(row.employeeNo || '').trim().toUpperCase();
+        const emp = empMap.get(cleanNo) || empMap.get(`${cleanNo}-STR`);
+        if (!emp) continue;
+        if (seenEmpIds.has(emp.id)) continue;
+        seenEmpIds.add(emp.id);
+
         let status = 'ACTIVE';
-        if (emp.endDate && new Date(emp.endDate) < new Date(period.periodEnd)) status = 'INACTIVE';
-        return {
+        if (emp.endDate && new Date(emp.endDate) < new Date(period.periodEnd)) {
+          status = 'INACTIVE';
+        }
+
+        const rowSalary = row.baseSalary !== undefined && row.baseSalary !== null && row.baseSalary !== ''
+          ? (typeof row.baseSalary === 'number' ? row.baseSalary : parseFloat(String(row.baseSalary).replace(/[^0-9.-]+/g, '')) || 0)
+          : (emp.baseSalary ? parseFloat(emp.baseSalary) : 0);
+
+        snapRows.push({
           periodId: period.id,
           employeeId: emp.id,
           divisionId: emp.divisionId,
@@ -279,23 +314,41 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData, sheetNames) => {
           employmentStatus: status,
           bpjsKetenagakerjaan: Boolean(emp.bpjsKetenagakerjaan),
           bpjsKesehatan: Boolean(emp.bpjsKesehatan),
-          budgetLabourCost: emp.baseSalary || 0,
+          budgetLabourCost: rowSalary,
           actualLabourCost: null
-        };
-      });
+        });
+      }
 
-      // HAPUS snapshot lama untuk periode ini sebelum insert baru agar data ter-update tanpa perlu Drop DB!
-      await prisma.employeeMonthlySnapshot.deleteMany({
-        where: {
-          periodId: period.id,
-          employeeId: { in: activeEmpIds }
-        }
-      });
+      // Bersihkan snapshot periode ini sebelum insert data baru
+      if (overallHasHO && overallHasStore) {
+        // Jika file mengandung HO dan Toko sekaligus, ganti penuh periode ini
+        await prisma.employeeMonthlySnapshot.deleteMany({
+          where: { periodId: period.id }
+        });
+      } else if (overallHasHO) {
+        // Jika hanya mengunggah HO, hapus data snapshot HO lama pada periode ini
+        await prisma.employeeMonthlySnapshot.deleteMany({
+          where: {
+            periodId: period.id,
+            employee: { storeId: null }
+          }
+        });
+      } else if (overallHasStore) {
+        // Jika hanya mengunggah Toko, hapus data snapshot Toko lama pada periode ini
+        await prisma.employeeMonthlySnapshot.deleteMany({
+          where: {
+            periodId: period.id,
+            employee: { storeId: { not: null } }
+          }
+        });
+      }
 
-      await prisma.employeeMonthlySnapshot.createMany({
-        data: snapRows,
-        skipDuplicates: true
-      });
+      if (snapRows.length > 0) {
+        await prisma.employeeMonthlySnapshot.createMany({
+          data: snapRows,
+          skipDuplicates: true
+        });
+      }
     }
   } catch (err) {
     console.error('Error auto-syncing snapshots after import:', err.message);

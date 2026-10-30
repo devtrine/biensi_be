@@ -152,6 +152,7 @@ const processBulkImport = async (rawData) => {
           empNo = `${empNo}-STR`;
         }
       }
+      row.employeeNo = empNo;
 
       // 3. Resolve Master Data (Find or Create dengan nama yang sudah dinormalisasi)
       let divisionId = null, departmentId = null, unitId = null, positionId = null, storeId = null;
@@ -236,6 +237,7 @@ const processBulkImport = async (rawData) => {
         employmentType: empType,
         joinDate: row.joinDate ? new Date(row.joinDate) : new Date(),
         endDate: validEndDate,
+        status: (validEndDate && validEndDate < new Date()) ? 'INACTIVE' : 'ACTIVE',
         bpjsKetenagakerjaan: Boolean(row.bpjsKetenagakerjaan),
         bpjsKesehatan: Boolean(row.bpjsKesehatan),
         baseSalary: parsedSalary
