@@ -392,7 +392,7 @@ const getIndustrialAndSpSummary = async (year, month = null) => {
     else complianceByType.lainnya++;
 
     const displayEntity = c.store?.storeName || c.location || c.entityName || 'HO';
-    const isHqDoc = !c.storeId && (String(displayEntity).toUpperCase() === 'HO' || String(displayEntity).toUpperCase().includes('HEAD OFFICE'));
+    const isHqDoc = !c.storeId;
 
     complianceList.push({
       id: c.id,
