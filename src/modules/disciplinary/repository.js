@@ -88,7 +88,7 @@ const resolveRelations = async (row) => {
   return { employeeId: employee.id, storeId, divisionId, departmentId };
 };
 
-const findOrCreatePeriod = async (year, month, monthName) => {
+const findOrCreatePeriod = async (year, month) => {
   const numYear = parseInt(year, 10);
   const numMonth = parseInt(month, 10);
 
@@ -101,7 +101,6 @@ const findOrCreatePeriod = async (year, month, monthName) => {
       data: {
         year: numYear,
         month: numMonth,
-        periodName: `${monthName || 'Bulan ' + numMonth} ${numYear}`,
         periodStart: new Date(Date.UTC(numYear, numMonth - 1, 1)),
         periodEnd: new Date(Date.UTC(numYear, numMonth, 0, 23, 59, 59))
       }
@@ -131,17 +130,18 @@ const processBulkSP = async (parsedData) => {
         }
       });
 
+      const isExpired = row.endDate && new Date(row.endDate) < new Date();
       const spPayload = {
         employeeId: rel.employeeId,
         disciplineType: discType,
         category: row.category || 'Tata Tertib',
         startDate: validStartDate,
         endDate: row.endDate,
-        remark: row.remark,
+        remark: row.remark || null,
         divisionId: rel.divisionId,
         departmentId: rel.departmentId,
         storeId: rel.storeId,
-        status: 'AKTIF'
+        status: isExpired ? 'NON AKTIF' : 'AKTIF'
       };
 
       if (existingSP) {
@@ -395,6 +395,11 @@ const getSpTokoAggregateByYear = async (year) => {
     { totalSpIssued: 0, tataTertibCount: 0, nonTataTertibCount: 0 }
   );
 
+  const MONTH_NAMES_ID = [
+    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+  ];
+
   return {
     year: isAllYears ? 'ALL' : numYear,
     scope: 'STORE',
@@ -402,7 +407,7 @@ const getSpTokoAggregateByYear = async (year) => {
     monthlyData: records.map(r => ({
       year: r.period.year,
       month: r.period.month,
-      periodName: r.period.periodName,
+      periodName: `${MONTH_NAMES_ID[(r.period.month || 1) - 1]} ${r.period.year}`,
       totalEmployees: r.totalEmployees,
       tataTertibCount: r.tataTertibCount,
       nonTataTertibCount: r.nonTataTertibCount,

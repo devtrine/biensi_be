@@ -208,21 +208,29 @@ const getAttendanceBothScopes = async (periodId, year = null) => {
 };
 
 // Ambil Ringkasan SP Toko, SP HO, Bipartit, Kontrak Lewat Jatuh Tempo, & Perizinan (WLKP/PP/K3)
-const getIndustrialAndSpSummary = async (year) => {
+const getIndustrialAndSpSummary = async (year, month = null) => {
   const numYear = parseInt(year, 10) || new Date().getFullYear();
+  const numMonth = month ? parseInt(month, 10) : 12;
   const startOfYear = new Date(Date.UTC(numYear, 0, 1, 0, 0, 0));
-  const endOfYear = new Date(Date.UTC(numYear, 11, 31, 23, 59, 59));
+  const refDate = new Date(Date.UTC(numYear, numMonth, 0, 23, 59, 59));
 
-  const [spStoreRecords, spHoCases, irCases, overdueContracts, compliances] = await Promise.all([
+  const [spStoreRecords, discCases, irCases, overdueContracts, compliances] = await Promise.all([
     prisma.spAggregateMonthly.findMany({
-      where: { scope: 'STORE', period: { year: numYear } }
+      where: {
+        scope: 'STORE',
+        period: {
+          year: numYear,
+          ...(month ? { month: { lte: numMonth } } : {})
+        }
+      },
+      include: { period: true }
     }),
     prisma.disciplinaryCase.findMany({
       where: {
-        storeId: null,
         category: { not: 'Fraud & Audit' },
-        startDate: { gte: startOfYear, lte: endOfYear }
-      }
+        startDate: { gte: startOfYear, lte: refDate }
+      },
+      include: { store: true }
     }),
     prisma.industrialRelationCase.findMany({
       include: { employee: true }
@@ -241,34 +249,83 @@ const getIndustrialAndSpSummary = async (year) => {
     })
   ]);
 
-  // Poin 6: Penamaan Jumlah SP Aktif & Jumlah SP Non Aktif (tetap menyimpan key lama sebagai alias)
-  const storeSp = spStoreRecords.reduce(
-    (acc, r) => {
-      acc.total += r.totalSpIssued;
-      acc.spAktif += r.tataTertibCount;
-      acc.spNonAktif += r.nonTataTertibCount;
-      acc.tataTertib += r.tataTertibCount;
-      acc.nonTataTertib += r.nonTataTertibCount;
+  const isCaseActiveAtRef = (c) => {
+    const stUpper = String(c.status || '').toUpperCase();
+    const discUpper = String(c.disciplineType || '').toUpperCase();
+    if (stUpper.includes('NON') || stUpper.includes('EXPIRED') || discUpper.includes('PHK')) return false;
+    if (c.endDate) return new Date(c.endDate) >= refDate;
+    if (c.startDate) {
+      const exp = new Date(c.startDate);
+      exp.setUTCMonth(exp.getUTCMonth() + 6);
+      return exp >= refDate;
+    }
+    return true;
+  };
+
+  const spHoCases = discCases.filter(c => c.storeId === null);
+  const spStoreCases = discCases.filter(c => c.storeId !== null);
+
+  // Poin 6: Penamaan Jumlah SP Aktif & Jumlah SP Non Aktif berdasarkan masa berlaku 6 bulan / End Date
+  const storeSp = { total: 0, spAktif: 0, spNonAktif: 0, tataTertib: 0, nonTataTertib: 0, sp1: 0, sp2: 0, sp3: 0, barat: 0, timur: 0 };
+
+  if (spStoreRecords.length > 0) {
+    spStoreRecords.forEach(r => {
+      const m = r.period?.month || 1;
       const brk = r.breakdown || {};
+      const phkCnt = brk.bySpLevel?.phk || 0;
+      const nonPhk = Math.max(0, r.totalSpIssued - phkCnt);
+
+      storeSp.total += r.totalSpIssued;
+      storeSp.tataTertib += r.tataTertibCount;
+      storeSp.nonTataTertib += r.nonTataTertibCount;
+
+      if (m > numMonth - 6) {
+        storeSp.spAktif += nonPhk;
+        storeSp.spNonAktif += phkCnt;
+      } else {
+        storeSp.spNonAktif += r.totalSpIssued;
+      }
+
       if (brk.bySpLevel) {
-        acc.sp1 += (brk.bySpLevel.sp1 || 0);
-        acc.sp2 += (brk.bySpLevel.sp2 || 0);
-        acc.sp3 += (brk.bySpLevel.sp3 || 0);
+        storeSp.sp1 += (brk.bySpLevel.sp1 || 0);
+        storeSp.sp2 += (brk.bySpLevel.sp2 || 0);
+        storeSp.sp3 += (brk.bySpLevel.sp3 || 0);
       }
       if (brk.byRegion) {
-        acc.barat += (brk.byRegion.barat || 0);
-        acc.timur += (brk.byRegion.timur || 0);
+        storeSp.barat += (brk.byRegion.barat || 0);
+        storeSp.timur += (brk.byRegion.timur || 0);
       }
-      return acc;
-    },
-    { total: 0, spAktif: 0, spNonAktif: 0, tataTertib: 0, nonTataTertib: 0, sp1: 0, sp2: 0, sp3: 0, barat: 0, timur: 0 }
-  );
+    });
+  } else {
+    spStoreCases.forEach(c => {
+      storeSp.total++;
+      if (isCaseActiveAtRef(c)) storeSp.spAktif++;
+      else storeSp.spNonAktif++;
+
+      if (String(c.category || '').toUpperCase().includes('NON')) storeSp.nonTataTertib++;
+      else storeSp.tataTertib++;
+
+      const dt = String(c.disciplineType || '').toUpperCase();
+      if (dt.includes('1')) storeSp.sp1++;
+      else if (dt.includes('2')) storeSp.sp2++;
+      else if (dt.includes('3')) storeSp.sp3++;
+
+      const reg = String(c.store?.region || '').toUpperCase();
+      if (reg === 'TIMUR') storeSp.timur++;
+      else if (reg === 'BARAT') storeSp.barat++;
+    });
+  }
 
   let hqSpAktif = 0;
   let hqSpNonAktif = 0;
+  let hqTataTertib = 0;
+  let hqNonTataTertib = 0;
   spHoCases.forEach(c => {
-    if (String(c.category || '').toUpperCase().includes('NON')) hqSpNonAktif++;
-    else hqSpAktif++;
+    if (isCaseActiveAtRef(c)) hqSpAktif++;
+    else hqSpNonAktif++;
+
+    if (String(c.category || '').toUpperCase().includes('NON')) hqNonTataTertib++;
+    else hqTataTertib++;
   });
 
   const countDisputes = (list) => {
@@ -372,16 +429,16 @@ const getIndustrialAndSpSummary = async (year) => {
       total: storeSp.total + spHoCases.length,
       spAktif: storeSp.spAktif + hqSpAktif,
       spNonAktif: storeSp.spNonAktif + hqSpNonAktif,
-      tataTertib: storeSp.tataTertib + hqSpAktif,
-      nonTataTertib: storeSp.nonTataTertib + hqSpNonAktif
+      tataTertib: storeSp.tataTertib + hqTataTertib,
+      nonTataTertib: storeSp.nonTataTertib + hqNonTataTertib
     },
     storeSp,
     hqSp: {
       total: spHoCases.length,
       spAktif: hqSpAktif,
       spNonAktif: hqSpNonAktif,
-      tataTertib: hqSpAktif,
-      nonTataTertib: hqSpNonAktif
+      tataTertib: hqTataTertib,
+      nonTataTertib: hqNonTataTertib
     },
     disputes: {
       corporate: countDisputes(irCases),

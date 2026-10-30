@@ -136,6 +136,8 @@ const processBulkImport = async (rawData) => {
       const posName = normalizeText(row.positionName);
       const levelName = normalizeText(row.levelName) || 'STAFF';
       const storeName = normalizeText(row.storeName);
+      const storeRegion = normalizeText(row.storeRegion);
+      const storeType = normalizeText(row.storeType);
 
       // Fallback nama jika kosong (seperti baris pertama A15161718 di Excel HO)
       const fullName = row.fullName && String(row.fullName).trim() !== ''
@@ -187,7 +189,24 @@ const processBulkImport = async (rawData) => {
 
       if (storeName && storeName !== 'TOTAL') {
         let store = await prisma.store.findFirst({ where: { storeName: { equals: storeName, mode: 'insensitive' } } });
-        if (!store) store = await prisma.store.create({ data: { storeName: storeName, storeCode: `STR-${Date.now()}` } });
+        if (!store) {
+          store = await prisma.store.create({
+            data: {
+              storeName: storeName,
+              storeCode: `STR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              region: storeRegion,
+              storeType: storeType
+            }
+          });
+        } else if ((storeRegion && store.region !== storeRegion) || (storeType && store.storeType !== storeType)) {
+          store = await prisma.store.update({
+            where: { id: store.id },
+            data: {
+              region: storeRegion || store.region,
+              storeType: storeType || store.storeType
+            }
+          });
+        }
         storeId = store.id;
       }
 

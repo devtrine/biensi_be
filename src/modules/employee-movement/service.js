@@ -43,12 +43,21 @@ const getValue = (row, targetKey) => {
   return exactKey ? row[exactKey] : undefined;
 };
 
+const getValContaining = (row, ...substrings) => {
+  for (const [k, v] of Object.entries(row)) {
+    if (v === null || v === undefined || String(v).trim() === '') continue;
+    const normKey = k.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    if (substrings.some(sub => normKey.includes(sub))) return v;
+  }
+  return undefined;
+};
+
 const determineReasonToko = (row) => {
-  if (getValue(row, 'resignsop')) return 'RESIGN SOP';
-  if (getValue(row, 'resignkasus')) return 'RESIGN KASUS';
-  if (getValue(row, 'habiskontrak')) return 'HABIS KONTRAK';
-  if (getValue(row, 'closingtoko')) return 'CLOSING TOKO';
-  if (getValue(row, 'phk')) return 'PHK';
+  if (getValContaining(row, 'resignkasus', 'nonsop')) return 'RESIGN KASUS';
+  if (getValContaining(row, 'resignsop')) return 'RESIGN SOP';
+  if (getValContaining(row, 'habiskontrak')) return 'HABIS KONTRAK';
+  if (getValContaining(row, 'closingtoko')) return 'CLOSING TOKO';
+  if (getValContaining(row, 'alasanphk') || getValue(row, 'phk')) return 'PHK';
   return 'LAINNYA';
 };
 
@@ -99,38 +108,48 @@ const importBulkMovement = async (filePath) => {
     const headers1 = rawMatrix[headerRowIndex] || [];
     const headers2 = rawMatrix[headerRowIndex + 1] || [];
 
-    const combinedHeaderStr = headers1.join('').toUpperCase() + headers2.join('').toUpperCase();
-    const isFormatToko = combinedHeaderStr.includes('SHOWROOM') || combinedHeaderStr.includes('REGIONAL');
-    const isFormatHO = (combinedHeaderStr.includes('KATEGORIPHK') || (combinedHeaderStr.includes('DIVISI') && (combinedHeaderStr.includes('RESIGN') || combinedHeaderStr.includes('PHK'))));
+    const h1Upper = headers1.join('').toUpperCase();
+    const h2Upper = headers2.join('').toUpperCase();
+    const combinedHeaderStr = h1Upper + h2Upper;
+    const isFormatToko = h1Upper.includes('SHOWROOM') || h1Upper.includes('REGIONAL');
+    const isFormatHO = (combinedHeaderStr.includes('KATEGORIPHK') || (h1Upper.includes('DIVISI') && (combinedHeaderStr.includes('RESIGN') || combinedHeaderStr.includes('PHK'))));
 
     let rawExcelData = [];
 
     if (isFormatToko) {
+      const isSecondRowBlank = headers2.length === 0 || headers2.every(v => v === null || v === undefined || String(v).trim() === '');
+      const hasMergedReasonSubHeader = !h1Upper.replace(/\s+/g, '').includes('RESIGNSOP') && (h2Upper.includes('SOP') || h2Upper.includes('PHK'));
+      const isTwoRowHeader = isSecondRowHeader(isSecondRowBlank, hasMergedReasonSubHeader);
+
       let cleanHeaders = [];
-      const maxCols = Math.max(headers1.length, headers2.length);
-
-      for (let c = 0; c < maxCols; c++) {
-        const h1 = String(headers1[c] || '').trim();
-        const h2 = String(headers2[c] || '').trim();
-
-        if (h2 && (!h1 || h1.toUpperCase() === 'ALASAN')) {
-          cleanHeaders.push(h2);
-        } else {
-          cleanHeaders.push(h1);
+      if (isTwoRowHeader) {
+        const maxCols = Math.max(headers1.length, headers2.length);
+        for (let c = 0; c < maxCols; c++) {
+          const h1 = String(headers1[c] || '').trim();
+          const h2 = String(headers2[c] || '').trim();
+          if (h2 && (!h1 || h1.toUpperCase() === 'ALASAN')) {
+            cleanHeaders.push(h2);
+          } else {
+            cleanHeaders.push(h1);
+          }
         }
+      } else {
+        cleanHeaders = headers1.map(h => String(h || '').trim());
       }
 
-      for (let r = headerRowIndex + 2; r < rawMatrix.length; r++) {
+      const dataStartRow = isTwoRowHeader ? headerRowIndex + 2 : headerRowIndex + 1;
+      for (let r = dataStartRow; r < rawMatrix.length; r++) {
+        const rowArr = rawMatrix[r] || [];
         let rowObj = {};
         for (let c = 0; c < cleanHeaders.length; c++) {
-          if (cleanHeaders[c]) rowObj[cleanHeaders[c]] = rawMatrix[r][c];
+          if (cleanHeaders[c]) rowObj[cleanHeaders[c]] = rowArr[c];
         }
         if (Object.keys(rowObj).length > 0) rawExcelData.push(rowObj);
       }
 
       const mappedData = rawExcelData.map(row => {
         const reason = determineReasonToko(row);
-        const moveDate = excelDateToJSDate(getValue(row, 'tglresign/habiskontrak'));
+        const moveDate = excelDateToJSDate(getValue(row, 'tglresign/habiskontrak') || getValue(row, 'tanggalresign/habiskontrak'));
         return {
           employeeNo: getValue(row, 'employeeno') || getValue(row, 'nik') || null,
           region: getValue(row, 'arearegional'),
@@ -138,6 +157,7 @@ const importBulkMovement = async (filePath) => {
           storeType: getValue(row, 'kategori') || getValue(row, 'katagori'),
           storeName: getValue(row, 'showroom/counter') || getValue(row, 'showroom'),
           employeeName: getValue(row, 'namakaryawan'),
+          positionName: getValue(row, 'jabatan/position') || getValue(row, 'jabatan') || getValue(row, 'position') || null,
           joinDate: excelDateToJSDate(getValue(row, 'tanggalmasukkerja')),
           movementDate: moveDate,
           reason: String(reason).trim().toUpperCase(),
@@ -151,12 +171,13 @@ const importBulkMovement = async (filePath) => {
 
       const mappedData = rawExcelData.map(row => {
         const reason = String(getValue(row, 'kategoriphk') || 'LAINNYA').trim().toUpperCase();
-        const moveDate = excelDateToJSDate(getValue(row, 'tanggalresign/habiskontrak'));
+        const moveDate = excelDateToJSDate(getValue(row, 'tanggalresign/habiskontrak') || getValue(row, 'tglresign/habiskontrak'));
         return {
           employeeNo: getValue(row, 'employeeno') || getValue(row, 'nik') || null,
           employeeName: getValue(row, 'namakaryawan'),
           divisionName: getValue(row, 'divisi'),
           departmentName: getValue(row, 'departemen'),
+          positionName: getValue(row, 'jabatan/position') || getValue(row, 'jabatan') || getValue(row, 'position') || null,
           joinDate: excelDateToJSDate(getValue(row, 'tanggalmasukkerja')),
           movementDate: moveDate,
           reason: reason,
@@ -180,6 +201,10 @@ const importBulkMovement = async (filePath) => {
 
   return await repository.processBulkMovement(finalData);
 };
+
+function isSecondRowHeader(isSecondRowBlank, hasMergedReasonSubHeader) {
+  return Boolean(isSecondRowBlank || hasMergedReasonSubHeader);
+}
 
 const getTurnoverDashboard = async (year, month) => {
   const numYear = parseInt(year, 10) || new Date().getFullYear();
@@ -268,6 +293,14 @@ const getTurnoverDashboard = async (year, month) => {
       nonVoluntary: monthlyTrendMap[m].nonVoluntary
     }));
 
+  const activeCount = await repository.getActiveEmployeesCount().catch(() => 0);
+  const monthlyTurnoverRate = activeCount > 0
+    ? ((currentMonthCount / (activeCount + currentMonthCount)) * 100).toFixed(1) + '%'
+    : '0.0%';
+  const annualTurnoverRate = activeCount > 0
+    ? ((movements.length / (activeCount + movements.length)) * 100).toFixed(1) + '%'
+    : '0.0%';
+
   return {
     success: true,
     data: {
@@ -277,7 +310,8 @@ const getTurnoverDashboard = async (year, month) => {
           totalYtd: movements.length,
           voluntaryTotal: voluntaryCount,
           voluntaryPercentage: movements.length ? ((voluntaryCount / movements.length) * 100).toFixed(1) + '%' : '0%',
-          annualTurnoverRate: '9.2%'
+          monthlyTurnoverRate,
+          annualTurnoverRate
         },
         monthlyTrend: orderedTrend,
         positionSpeed: formatRank(positionCountMap).slice(0, 5)

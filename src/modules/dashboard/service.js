@@ -622,7 +622,7 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
     const moveMonth = monthNames[d.getUTCMonth()];
     const type = m.movementType;
     const reason = (m.reasonCategory || 'LAINNYA').toUpperCase();
-    const posName = m.employee?.position?.name || 'Unknown';
+    const posName = m.employee?.position?.name || m.department?.name || m.store?.storeType || 'Retail Associate';
 
     if (type === 'VOLUNTARY') voluntaryCount++;
     else if (type === 'INVOLUNTARY') involuntaryCount++;
@@ -650,7 +650,7 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
       const tenureYears = Math.max(0, (moveDate - joinDate) / (1000 * 60 * 60 * 24 * 365.25)).toFixed(1);
       return {
         name: m.employee.fullName,
-        position: m.employee.position?.name,
+        position: m.employee.position?.name || m.department?.name || m.store?.storeType || 'Staff',
         unit: m.store?.storeName || m.department?.name,
         reason: m.reasonCategory,
         effectiveDate: m.movementDate,
@@ -688,6 +688,11 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
     };
   };
 
+  const activeEmployees = await repository.getActiveEmployeesForSnapshot().catch(() => []);
+  const activeCount = activeEmployees.length || 0;
+  const defaultMonthlyRate = activeCount > 0 ? ((currentMonthCount / (activeCount + currentMonthCount)) * 100).toFixed(1) + '%' : '0.0%';
+  const defaultAnnualRate = activeCount > 0 ? ((movements.length / (activeCount + movements.length)) * 100).toFixed(1) + '%' : '0.0%';
+
   return {
     success: true,
     data: {
@@ -697,7 +702,8 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
           totalYtd: movements.length,
           voluntaryTotal: voluntaryCount,
           voluntaryPercentage: movements.length ? ((voluntaryCount / movements.length) * 100).toFixed(1) + '%' : '0%',
-          annualTurnoverRate: '9.2%'
+          monthlyTurnoverRate: defaultMonthlyRate,
+          annualTurnoverRate: defaultAnnualRate
         },
         monthlyTrend: orderedTrend,
         positionSpeed: formatRank(positionCountMap).slice(0, 5),
@@ -750,16 +756,27 @@ const getMainExecutiveDashboard = async (filters = {}) => {
     getDashboardSummary(period.id, scope),
     getStorePerformanceDashboard(period.id, year),
     getTurnoverDashboard(year, month, scope),
-    repository.getIndustrialAndSpSummary(year)
+    repository.getIndustrialAndSpSummary(year, month)
   ]);
 
-  const monthlyResigned = turnoverData.data.overview.kpi.monthlyTurnover;
-  const activeHeadcount = summaryData.demographics.totalHeadcount;
+  const monthlyResigned = turnoverData.data.overview.kpi.monthlyTurnover || 0;
+  const activeHeadcount = summaryData.demographics?.totalHeadcount || 0;
+  const totalResignedYtd = turnoverData.data.overview.kpi.totalYtd || 0;
+
+  const monthlyTurnoverRate = activeHeadcount > 0
+    ? ((monthlyResigned / (activeHeadcount + monthlyResigned)) * 100).toFixed(1) + '%'
+    : '0.0%';
+  const annualTurnoverRate = activeHeadcount > 0
+    ? ((totalResignedYtd / (activeHeadcount + totalResignedYtd)) * 100).toFixed(1) + '%'
+    : '0.0%';
+
+  turnoverData.data.overview.kpi.monthlyTurnoverRate = monthlyTurnoverRate;
+  turnoverData.data.overview.kpi.annualTurnoverRate = annualTurnoverRate;
+
   summaryData.retention = {
     totalResigned: monthlyResigned,
-    turnoverRate: activeHeadcount > 0
-      ? ((monthlyResigned / (activeHeadcount + monthlyResigned)) * 100).toFixed(1) + '%'
-      : '0%'
+    turnoverRate: monthlyTurnoverRate,
+    annualTurnoverRate: annualTurnoverRate
   };
 
   return {

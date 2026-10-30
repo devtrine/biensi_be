@@ -96,20 +96,32 @@ const upsertAttendanceAggregate = async (periodId, scope, data) => {
 };
 
 // Fungsi Sakti: Cari toko, kalau tidak ada otomatis buat baru
-const getOrCreateStore = async (storeName) => {
-  const cleanName = String(storeName).trim();
+const getOrCreateStore = async (storeName, region = null, storeType = null) => {
+  const cleanName = String(storeName).trim().toUpperCase();
+  const cleanRegion = region ? String(region).trim().toUpperCase() : null;
+  const cleanType = storeType ? String(storeType).trim().toUpperCase() : null;
   
   // 1. Cek apakah toko dengan nama ini sudah ada di database
   let store = await prisma.store.findFirst({
     where: { storeName: { equals: cleanName, mode: 'insensitive' } }
   });
 
-  // 2. Jika belum ada, buat toko baru
+  // 2. Jika belum ada, buat toko baru; jika ada dan atribut baru tersedia, perbarui
   if (!store) {
     store = await prisma.store.create({
       data: {
         storeName: cleanName,
-        storeCode: `STR-${Date.now()}`
+        storeCode: `STR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        region: cleanRegion,
+        storeType: cleanType
+      }
+    });
+  } else if ((cleanRegion && store.region !== cleanRegion) || (cleanType && store.storeType !== cleanType)) {
+    store = await prisma.store.update({
+      where: { id: store.id },
+      data: {
+        region: cleanRegion || store.region,
+        storeType: cleanType || store.storeType
       }
     });
   }
@@ -134,7 +146,26 @@ const getAllEmployeesNik = async () => {
 };
 
 const bulkCreateSales = async (dataArray) => {
-  return await prisma.salesMonthly.createMany({ data: dataArray, skipDuplicates: true });
+  if (!dataArray || dataArray.length === 0) return { count: 0 };
+  await prisma.$transaction(
+    dataArray.map(item =>
+      prisma.salesMonthly.upsert({
+        where: {
+          periodId_storeId: {
+            periodId: item.periodId,
+            storeId: item.storeId
+          }
+        },
+        update: {
+          salesQty: item.salesQty,
+          netSales: item.netSales,
+          ...(item.targetSales !== undefined ? { targetSales: item.targetSales } : {})
+        },
+        create: item
+      })
+    )
+  );
+  return { count: dataArray.length };
 };
 
 // DASHBOARD AGGREGATION QUERIES

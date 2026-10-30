@@ -646,7 +646,7 @@ const importSalesUniversal = async (filePath) => {
     const raw2DArray = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
     let header1Index = -1;
     for (let i = 0; i < raw2DArray.length; i++) {
-      if (raw2DArray[i].some(cell => typeof cell === 'string' && cell.replace(/\s+/g, '').toUpperCase().includes('NAMATOKO'))) {
+      if ((raw2DArray[i] || []).some(cell => typeof cell === 'string' && cell.replace(/\s+/g, '').toUpperCase().includes('NAMATOKO'))) {
         header1Index = i;
         break;
       }
@@ -656,32 +656,54 @@ const importSalesUniversal = async (filePath) => {
 
     const headerMonths = raw2DArray[header1Index];
     const dataRows = raw2DArray.slice(header1Index + 2);
-    const storeNameIndex = headerMonths.findIndex(h => typeof h === 'string' && h.replace(/\s+/g, '').toUpperCase().includes('NAMATOKO'));
+    const normH = (h) => typeof h === 'string' ? h.replace(/\s+/g, '').toUpperCase() : '';
+    const storeNameIndex = headerMonths.findIndex(h => normH(h).includes('NAMATOKO'));
+    const regIndex = headerMonths.findIndex(h => normH(h) === 'REG' || normH(h).includes('REGIONAL'));
+    const storeTypeIndex = headerMonths.findIndex(h => normH(h).includes('JENISTOKO') || normH(h).includes('KATEGORITOKO') || normH(h) === 'KATAGORI');
 
     for (const row of dataRows) {
       const storeName = row[storeNameIndex];
-      if (!storeName || String(storeName).trim() === '') continue;
+      if (!storeName || String(storeName).trim() === '' || String(storeName).trim().toUpperCase() === 'TOTAL') continue;
 
-      const storeId = await repository.getOrCreateStore(storeName);
+      const storeRegion = regIndex !== -1 ? row[regIndex] : null;
+      const storeType = storeTypeIndex !== -1 ? row[storeTypeIndex] : null;
+      const storeId = await repository.getOrCreateStore(storeName, storeRegion, storeType);
+
+      const monthSalesMap = new Map();
 
       for (let colIndex = 0; colIndex < headerMonths.length; colIndex++) {
         const headerText = headerMonths[colIndex];
-        if (typeof headerText === 'string' && headerText.toUpperCase().includes('ACTUAL')) {
-          const parsed = parseMonthYear(headerText);
-          if (!parsed) continue;
+        if (typeof headerText !== 'string') continue;
+        const upper = headerText.toUpperCase();
+        const isActual = upper.includes('ACTUAL');
+        const isTarget = upper.includes('TARGET');
+        if (!isActual && !isTarget) continue;
 
-          const periodId = await getOrCreatePeriodId(parsed.year, parsed.month);
-          const qtyValue = parseFloat(row[colIndex]) || 0;
-          const nominalValue = parseFloat(row[colIndex + 1]) || 0;
+        const parsed = parseMonthYear(headerText);
+        if (!parsed) continue;
 
-          if (qtyValue > 0 || nominalValue > 0) {
-            totalFormattedData.push({
-              periodId: periodId,
-              storeId: storeId,
-              salesQty: qtyValue,
-              netSales: nominalValue
-            });
-          }
+        const key = `${parsed.year}-${parsed.month}`;
+        const entry = monthSalesMap.get(key) || { year: parsed.year, month: parsed.month, salesQty: 0, netSales: 0, targetSales: 0 };
+
+        if (isTarget) {
+          entry.targetSales = parseFloat(row[colIndex + 1]) || 0;
+        } else if (isActual) {
+          entry.salesQty = parseFloat(row[colIndex]) || 0;
+          entry.netSales = parseFloat(row[colIndex + 1]) || 0;
+        }
+        monthSalesMap.set(key, entry);
+      }
+
+      for (const entry of monthSalesMap.values()) {
+        if (entry.salesQty > 0 || entry.netSales > 0) {
+          const periodId = await getOrCreatePeriodId(entry.year, entry.month);
+          totalFormattedData.push({
+            periodId,
+            storeId,
+            salesQty: entry.salesQty,
+            netSales: entry.netSales,
+            ...(entry.targetSales > 0 ? { targetSales: entry.targetSales } : {})
+          });
         }
       }
     }
