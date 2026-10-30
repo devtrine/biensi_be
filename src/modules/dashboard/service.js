@@ -14,6 +14,155 @@ const isMaleGender = (rawGender) => {
   );
 };
 
+// 14 Standarisasi Kelompok Jabatan Sesuai Data Berjalan
+const STANDARD_LEVEL_ORDER = [
+  'Direktur/CEO',
+  'GM/VP',
+  'Manager',
+  'Asst Man',
+  'Head',
+  'Asst Head',
+  'Leader',
+  'Staff',
+  'Operator',
+  'Store Leader',
+  'Asst Store Leader',
+  'Kasir',
+  'Vm Store',
+  'Sales Advisor'
+];
+
+const LEVEL_TO_GROUP = {
+  'Direktur/CEO': 'management',
+  'GM/VP': 'management',
+  'Manager': 'management',
+  'Asst Man': 'management',
+  'Head': 'leader',
+  'Asst Head': 'leader',
+  'Leader': 'leader',
+  'Store Leader': 'leader',
+  'Asst Store Leader': 'leader',
+  'Staff': 'staff',
+  'Operator': 'staff',
+  'Kasir': 'staff',
+  'Vm Store': 'staff',
+  'Sales Advisor': 'staff'
+};
+
+const classifyEmployeeLevel = (emp) => {
+  if (!emp) return 'Staff';
+  const levelStr = String(emp.position?.employeeLevel || '').trim().toUpperCase();
+  const nameStr = String(emp.position?.name || '').trim().toUpperCase();
+  const titleStr = String(emp.jobTitle || '').trim().toUpperCase();
+  const comb = `${levelStr} ${nameStr} ${titleStr}`;
+
+  if (
+    comb.includes('DIREKTUR') ||
+    comb.includes('DIRECTOR') ||
+    comb.includes('BOD') ||
+    comb.includes('CEO') ||
+    comb.includes('PRESIDENT')
+  ) {
+    return 'Direktur/CEO';
+  }
+
+  if (
+    comb.includes('GENERAL MANAGER') ||
+    /\bGM\b/.test(comb) ||
+    comb.includes('VICE PRESIDENT') ||
+    /\bVP\b/.test(comb)
+  ) {
+    return 'GM/VP';
+  }
+
+  if (
+    comb.includes('ASST MAN') ||
+    comb.includes('ASST. MAN') ||
+    comb.includes('ASSISTANT MAN') ||
+    comb.includes('ASSOCIATE MAN') ||
+    comb.includes('DEPUTY MAN')
+  ) {
+    return 'Asst Man';
+  }
+
+  if (comb.includes('MAN') && (comb.includes('MANAGER') || levelStr === 'MGR' || levelStr === 'MANAGER')) {
+    return 'Manager';
+  }
+
+  if (comb.includes('ASST HEAD') || comb.includes('ASSISTANT HEAD') || comb.includes('DEPUTY HEAD')) {
+    return 'Asst Head';
+  }
+
+  if (comb.includes('HEAD') || levelStr === 'HEAD' || comb.includes('KEPALA DEPT') || comb.includes('KEPALA DIVISI')) {
+    return 'Head';
+  }
+
+  if (
+    comb.includes('ASST STORE LEADER') ||
+    comb.includes('ASSISTANT STORE LEADER') ||
+    comb.includes('ASST. STORE LEADER') ||
+    comb.includes('ASST SL') ||
+    comb.includes('WAKIL KEPALA TOKO')
+  ) {
+    return 'Asst Store Leader';
+  }
+
+  if (
+    comb.includes('STORE LEADER') ||
+    comb.includes('KEPALA TOKO') ||
+    /\bSL\b/.test(nameStr) ||
+    (/\bSL\b/.test(levelStr) && emp.storeId)
+  ) {
+    return 'Store Leader';
+  }
+
+  if (
+    comb.includes('LEADER') ||
+    levelStr === 'LEADER' ||
+    comb.includes('SUPERVISOR') ||
+    comb.includes('SPV') ||
+    comb.includes('KOORDINATOR')
+  ) {
+    return 'Leader';
+  }
+
+  if (comb.includes('VM STORE') || comb.includes('VISUAL MERCHANDIS') || /\bVM\b/.test(nameStr)) {
+    return 'Vm Store';
+  }
+
+  if (comb.includes('KASIR') || comb.includes('CASHIER')) {
+    return 'Kasir';
+  }
+
+  if (
+    comb.includes('SALES ADVISOR') ||
+    /\bSA\b/.test(comb) ||
+    comb.includes('PRAMUNIAGA') ||
+    comb.includes('SPG') ||
+    comb.includes('SPB') ||
+    comb.includes('SHOPKEEPER')
+  ) {
+    return 'Sales Advisor';
+  }
+
+  if (
+    levelStr === 'OPR' ||
+    levelStr === 'OPERATOR' ||
+    comb.includes('OPERATOR') ||
+    comb.includes('DRIVER') ||
+    comb.includes('WAREHOUSE') ||
+    comb.includes('BORONGAN') ||
+    comb.includes('PERBANTUAN') ||
+    comb.includes('HELPER') ||
+    comb.includes('HOST LIVE') ||
+    comb.includes('KURIR')
+  ) {
+    return 'Operator';
+  }
+
+  return 'Staff';
+};
+
 // Helper untuk mengelompokkan populasi karyawan (dipakai oleh Corporate, HQ, dan Store)
 const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0) => {
   const refDate = new Date(Date.UTC(periodYear, periodMonth, 0));
@@ -44,7 +193,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     over10Years: 0
   };
 
-  // 7 Level Jabatan
+  // 7 Level Jabatan (Legacy)
   const byLevelStandard = {
     bodPlus: 0,          // #11 BOD+
     manager: 0,          // #12 Manager
@@ -54,6 +203,10 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     teamLeader: 0,       // #16 Team Leader (Store Leader)
     staffCrew: 0         // #17 Staff / Crew / Cashier / SA
   };
+
+  // 14 Level Jabatan Standar
+  const byEmployeeLevel14 = {};
+  STANDARD_LEVEL_ORDER.forEach(l => { byEmployeeLevel14[l] = 0; });
 
   // 4 Tipe Kontrak
   const byEmploymentStandard = {
@@ -114,32 +267,19 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
       else byTenureBracket.over10Years++;
     }
 
-    // Klasifikasi Level Jabatan
-    const lvlStr = `${emp.position?.employeeLevel || ''} ${emp.position?.name || ''}`.toUpperCase();
-    let groupKey = 'staff';
+    // Klasifikasi Level Jabatan (14 Tingkat Standar Sesuai Data Berjalan)
+    const levelCategory = classifyEmployeeLevel(emp);
+    byEmployeeLevel14[levelCategory] = (byEmployeeLevel14[levelCategory] || 0) + 1;
+    const groupKey = LEVEL_TO_GROUP[levelCategory] || 'staff';
 
-    if (lvlStr.includes('BOD') || lvlStr.includes('DIRECTOR') || lvlStr.includes('DIREKTUR')) {
-      byLevelStandard.bodPlus++;
-      groupKey = 'management';
-    } else if (lvlStr.includes('ASSOCIATE MANAGER') || lvlStr.includes('ASST MANAGER')) {
-      byLevelStandard.associateManager++;
-      groupKey = 'management';
-    } else if (lvlStr.includes('MANAGER')) {
-      byLevelStandard.manager++;
-      groupKey = 'management';
-    } else if (lvlStr.includes('ASST HEAD') || lvlStr.includes('ASSOCIATE LEAD') || lvlStr.includes('SUPERVISOR') || lvlStr.includes('SPV')) {
-      byLevelStandard.associateLead++;
-      groupKey = 'leader';
-    } else if (lvlStr.includes('HEAD') || lvlStr.includes('KA.')) {
-      byLevelStandard.lead++;
-      groupKey = 'leader';
-    } else if (lvlStr.includes('LEADER')) {
-      byLevelStandard.teamLeader++;
-      groupKey = 'leader';
-    } else {
-      byLevelStandard.staffCrew++;
-      groupKey = 'staff';
-    }
+    // Legacy standard level mapping
+    if (levelCategory === 'Direktur/CEO') byLevelStandard.bodPlus++;
+    else if (levelCategory === 'GM/VP' || levelCategory === 'Manager') byLevelStandard.manager++;
+    else if (levelCategory === 'Asst Man') byLevelStandard.associateManager++;
+    else if (levelCategory === 'Head') byLevelStandard.lead++;
+    else if (levelCategory === 'Asst Head') byLevelStandard.associateLead++;
+    else if (levelCategory === 'Leader' || levelCategory === 'Store Leader' || levelCategory === 'Asst Store Leader') byLevelStandard.teamLeader++;
+    else byLevelStandard.staffCrew++;
 
     posGroupAcc[groupKey].count++;
     if (ageVal !== null && ageVal > 0) {
@@ -162,6 +302,11 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
   const headcount = empList.length;
   const leaderTotal = posGroupAcc.leader.count + posGroupAcc.management.count;
 
+  const byEmployeeLevel = STANDARD_LEVEL_ORDER.map(level => ({
+    level,
+    count: byEmployeeLevel14[level] || 0
+  }));
+
   return {
     headcount,
     avgAge: validAgeCount ? Number((totalAge / validAgeCount).toFixed(1)) : 0,
@@ -171,6 +316,8 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     byAgeBracket,
     byTenureBracket,
     byLevelStandard,
+    byEmployeeLevel,
+    byEmployeeLevel14,
     byEmploymentStandard,
     byPositionGroup: {
       staff: {
@@ -246,7 +393,8 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
     byDepartment: {},
     byGender: { 'LAKI-LAKI': 0, PEREMPUAN: 0 },
     byEmploymentType: {},
-    byEmployeeLevel: activeScopeStats.byLevelStandard,
+    byEmployeeLevel: activeScopeStats.byEmployeeLevel,
+    byLevelStandard: activeScopeStats.byLevelStandard,
     byAgeBracket: activeScopeStats.byAgeBracket,
     byTenureBracket: activeScopeStats.byTenureBracket,
     byPositionGroup: activeScopeStats.byPositionGroup
