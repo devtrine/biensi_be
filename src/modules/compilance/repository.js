@@ -36,7 +36,10 @@ const upsertComplianceDoc = async (payload) => {
     where: {
       storeId: payload.storeId,
       location: payload.location || null,
-      documentType: { equals: payload.documentType, mode: 'insensitive' }
+      documentType: { equals: payload.documentType, mode: 'insensitive' },
+      description: payload.description ? { equals: payload.description, mode: 'insensitive' } : null,
+      validFrom: payload.validFrom || null,
+      validUntil: payload.validUntil || null
     }
   });
 

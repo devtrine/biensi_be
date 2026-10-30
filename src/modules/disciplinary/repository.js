@@ -161,11 +161,15 @@ const processBulkSP = async (parsedData) => {
         });
       }
 
-      // ✅ EFEK DOMINO OTOMATIS: Jika sanksi di tabel SP adalah PHK, langsung nonaktifkan karyawan!
+      // Efek PHK: Catat tanggal akhir kontrak/kerja (endDate). Status non-aktif hanya jika tanggal PHK sudah lewat
       if (discType.toUpperCase().includes('PHK')) {
+        const isAlreadyPast = validStartDate && new Date(validStartDate) <= new Date();
         await prisma.employee.update({
           where: { id: rel.employeeId },
-          data: { status: 'INACTIVE', endDate: validStartDate }
+          data: {
+            endDate: validStartDate,
+            ...(isAlreadyPast ? { status: 'INACTIVE' } : {})
+          }
         });
       }
 
