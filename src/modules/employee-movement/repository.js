@@ -103,7 +103,7 @@ const processBulkMovement = async (parsedData) => {
         storeId = store.id;
       }
 
-      // 2. === AUTO-CREATE / CARI DIVISI & DEPARTEMEN ===
+      // 2. === AUTO-CREATE / CARI DIVISI, DEPARTEMEN & POSISI ===
       let divisionId = null;
       const cleanDivName = normalizeText(row.divisionName);
       if (cleanDivName) {
@@ -137,6 +137,23 @@ const processBulkMovement = async (parsedData) => {
           });
         }
         if (department) departmentId = department.id;
+      }
+
+      let positionId = null;
+      const cleanPosName = normalizeText(row.positionName);
+      if (cleanPosName) {
+        let position = await prisma.position.findFirst({
+          where: { name: { equals: cleanPosName, mode: 'insensitive' } }
+        });
+        if (!position) {
+          position = await prisma.position.create({
+            data: {
+              name: cleanPosName,
+              code: `POS-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+            }
+          });
+        }
+        positionId = position.id;
       }
 
       // 3. === CARI KARYAWAN (PRIORITAS 1: NIK, PRIORITAS 2: NAMA) & AUTO-INACTIVE ===
@@ -177,7 +194,8 @@ const processBulkMovement = async (parsedData) => {
             status: 'INACTIVE',
             storeId: storeId,
             divisionId: divisionId,
-            departmentId: departmentId
+            departmentId: departmentId,
+            positionId: positionId
           }
         });
       } else {
@@ -190,7 +208,8 @@ const processBulkMovement = async (parsedData) => {
             endDate: row.movementDate,
             storeId: employee.storeId || storeId,
             divisionId: employee.divisionId || divisionId,
-            departmentId: employee.departmentId || departmentId
+            departmentId: employee.departmentId || departmentId,
+            positionId: employee.positionId || positionId
           }
         });
       }
@@ -259,6 +278,12 @@ const getExpiringContracts = async (targetDate) => {
   });
 };
 
+const getActiveEmployeesCount = async () => {
+  return await prisma.employee.count({
+    where: { status: 'ACTIVE' }
+  });
+};
+
 module.exports = {
   getAllMovements,
   getMovementById,
@@ -266,5 +291,6 @@ module.exports = {
   deleteMovement,
   processBulkMovement,
   getExpiringContracts,
-  getTurnoverMovements
+  getTurnoverMovements,
+  getActiveEmployeesCount
 };

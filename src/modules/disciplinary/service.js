@@ -116,6 +116,7 @@ const importBulkSP = async (filePath) => {
         else if (cell.includes('NONTATATERTIB')) col.nonTataTertib = c;
         else if (cell.includes('TATATERTIB')) col.tataTertib = c;
         else if (cell === 'PERIODE') col.periode = c;
+        else if (cell === 'KETERANGAN' || cell === 'REMARK') col.remark = c;
       }
     }
 
@@ -145,7 +146,8 @@ const importBulkSP = async (filePath) => {
         disciplineName: col.discName !== undefined ? row[col.discName] : 'Surat Peringatan',
         startDate,
         endDate,
-        category
+        category,
+        remark: col.remark !== undefined ? row[col.remark] : null
       });
     }
   }

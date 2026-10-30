@@ -197,6 +197,8 @@ const processExcelImport = async (filePath) => {
       departmentName: getValue(row, 'departemennewbyhrbp') || getValue(row, 'departemen') || getValue(row, 'department'),
       unitName: getValue(row, 'unitdeptbyhrbp') || getValue(row, 'unit'),
       storeName: getValue(row, 'namatoko') || getValue(row, 'store') || getValue(row, 'storename') || getValue(row, 'showroom'),
+      storeRegion: getValue(row, 'arearegional') || getValue(row, 'regional') || getValue(row, 'reg') || null,
+      storeType: getValue(row, 'kategoritoko') || getValue(row, 'jenistoko') || getValue(row, 'katagori') || null,
       positionName: getValue(row, 'jabatan') || getValue(row, 'posisi') || getValue(row, 'position'),
       levelName: getValue(row, 'leveljabatan') || getValue(row, 'employeelevel') || getValue(row, 'level'),
 
