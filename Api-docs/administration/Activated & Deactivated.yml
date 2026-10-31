@@ -1,0 +1,28 @@
+info:
+  name: Activated & Deactivated
+  type: http
+  seq: 6
+
+http:
+  method: PUT
+  url: http://localhost:5000/api/v1/administration/users/{{id}}
+  body:
+    type: json
+    data: |-
+      {
+        "isActive" : true,
+        "roleId" : 3
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: id
+      value: 7ca022b2-ca51-4103-a5b7-c8537dec4a04
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

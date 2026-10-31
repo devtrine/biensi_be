@@ -5,7 +5,7 @@ info:
 
 http:
   method: GET
-  url: http://localhost:5000/api/v1/administration/{{id}}/permissions
+  url: http://localhost:5000/api/v1/administration/roles
   auth: inherit
 
 settings:

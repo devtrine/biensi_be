@@ -1,0 +1,44 @@
+info:
+  name: Update Permissions role
+  type: http
+  seq: 7
+
+http:
+  method: PUT
+  url: http://localhost:5000/api/v1/administration/roles/{{id}}/permissions
+  body:
+    type: json
+    data: |-
+      {
+        "permissions": {
+          "modules": {
+            "roles": { "view": false, "create": false, "edit": false, "delete": false, "export": false },
+            "users": { "view": false, "create": false, "edit": false, "delete": false, "export": false },
+            "import": { "view": false, "create": false, "edit": false, "delete": false, "export": false },
+            "turnover": { "view": true, "create": false, "edit": false, "delete": false, "export": false },
+            "dashboard": { "view": false, "create": false, "edit": false, "delete": false, "export": false }, 
+            "employees": { "view": true, "create": true, "edit": true, "delete": false, "export": true },
+            "attendance": { "view": true, "create": true, "edit": false, "delete": false, "export": false },
+            "fraudAndIr": { "view": true, "create": false, "edit": false, "delete": false, "export": false },
+            "labourCost": { "view": true, "create": false, "edit": false, "delete": false, "export": false },
+            "masterData": { "view": true, "create": false, "edit": false, "delete": false, "export": false },
+            "activityLog": { "view": false, "create": false, "edit": false, "delete": false, "export": false },
+            "disciplinary": { "view": true, "create": false, "edit": false, "delete": false, "export": false }
+          },
+          "accessLevel": "READ",
+          "description": "Staf HR yang tidak boleh lihat dashboard"
+        }
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: id
+      value: "4"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

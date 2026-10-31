@@ -1,21 +1,22 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('./controller');
-const { authenticate } = require('../../middleware/auth');
+const { authenticate, checkPermission } = require('../../middleware/auth'); // Inject middleware
 const uploader = require('../../middleware/upload');
 
 router.use(authenticate);
 
-router.post('/import-sp', uploader.upload.single('file'), controller.importBulkSP);
-router.post('/import-fraud', uploader.upload.single('file'), controller.importBulkFraud);
-router.post('/import-bipartit', uploader.upload.single('file'), controller.importBulkBipartit);
-router.post('/sp-rekap/import', uploader.upload.single('file'), controller.importSpTokoRekap);
+// [GEMBOK IMPORT] Mengunci semua celah upload excel SP, Fraud, dan Bipartit
+router.post('/import-sp', checkPermission('import', 'create'), uploader.upload.single('file'), controller.importBulkSP);
+router.post('/import-fraud', checkPermission('import', 'create'), uploader.upload.single('file'), controller.importBulkFraud);
+router.post('/import-bipartit', checkPermission('import', 'create'), uploader.upload.single('file'), controller.importBulkBipartit);
+router.post('/sp-rekap/import', checkPermission('import', 'create'), uploader.upload.single('file'), controller.importSpTokoRekap);
 
-// 2. Endpoint GET
-router.get('/dashboard', controller.getDashboardOverview);
-router.get('/sp-rekap', controller.getSpTokoRekap);
-router.get('/', controller.getAllCases);
-router.get('/:id', controller.getCaseById);
-router.delete('/:id', controller.deleteCase);
+// Endpoint GET & DELETE: Dibatasi oleh modul 'disciplinary'
+router.get('/dashboard', checkPermission('disciplinary', 'view'), controller.getDashboardOverview);
+router.get('/sp-rekap', checkPermission('disciplinary', 'view'), controller.getSpTokoRekap);
+router.get('/', checkPermission('disciplinary', 'view'), controller.getAllCases);
+router.get('/:id', checkPermission('disciplinary', 'view'), controller.getCaseById);
+router.delete('/:id', checkPermission('disciplinary', 'delete'), controller.deleteCase);
 
-module.exports = router;
+module.exports = router;    

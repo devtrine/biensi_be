@@ -2,27 +2,86 @@ const service = require('./service');
 
 const createUser = async (req, res) => {
   try {
-    const { name, email, password, roleId, phoneNumber } = req.body;
-    const creatorRoleId = req.user.roleId; // ID pembuat yang didapat dari Token
+    const { name, email, password, roleId, phoneNumber, isActive } = req.body;
+    const creatorRoleId = req.user.roleId;
 
-    // // HIERARKI MUTLAK: Hanya Super Admin (1) yang boleh membuat Super Admin (1) baru
-    // if (creatorRoleId !== 1 && parseInt(roleId) === 1) {
-    //   return res.status(403).json({ 
-    //     success: false, 
-    //     message: "Pelanggaran Hierarki: Anda tidak diizinkan membuat akun dengan level Super Admin." 
-    //   });
-    // }
-
-    // Validasi basic
-    if (!name || !email || !password) {
-      return res.status(400).json({ success: false, message: "Nama, email, password, dan roleId wajib diisi." });
+    if (!name || !email || !password || !roleId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nama, email, password, dan roleId wajib diisi.'
+      });
     }
 
-    const result = await service.createNewUser({ name, email, password, roleId: 1, phoneNumber });
-    
-    res.status(201).json({ success: true, data: result, message: 'Pengguna berhasil ditambahkan' });
+    // HIERARKI MUTLAK: Hanya Super Admin (roleId === 1) yang boleh membuat akun Super Admin baru
+    if (creatorRoleId !== 1 && parseInt(roleId, 10) === 1) {
+      return res.status(403).json({
+        success: false,
+        message: 'Pelanggaran Hierarki: Anda tidak diizinkan membuat akun dengan level Super Admin.'
+      });
+    }
+
+    const result = await service.createNewUser({
+      name,
+      email,
+      password,
+      roleId: parseInt(roleId, 10),
+      phoneNumber,
+      isActive
+    });
+
+    res.status(201).json({
+      success: true,
+      data: result,
+      message: 'Pengguna berhasil ditambahkan'
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const updateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, password, roleId, phoneNumber, isActive } = req.body;
+    const editorRoleId = req.user.roleId;
+
+    // Cegah non-Super Admin mengubah role seseorang menjadi Super Admin
+    if (roleId !== undefined && editorRoleId !== 1 && parseInt(roleId, 10) === 1) {
+      return res.status(403).json({
+        success: false,
+        message: 'Pelanggaran Hierarki: Anda tidak diizinkan memberikan hak akses Super Admin.'
+      });
+    }
+
+    const result = await service.updateUserByAdmin(id, {
+      name,
+      email,
+      password,
+      roleId,
+      phoneNumber,
+      isActive
+    });
+
+    res.status(200).json({
+      success: true,
+      data: result,
+      message: 'Data pengguna berhasil diperbarui'
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await service.deleteUserByAdmin(id, req.user.id);
+    res.status(200).json({
+      success: true,
+      message: 'Pengguna berhasil dihapus'
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -37,23 +96,28 @@ const getMyProfile = async (req, res) => {
 
 const updateMyProfile = async (req, res) => {
   try {
-    // Pastikan pakai kurung kurawal (destructuring)
-    const { name, email, phoneNumber } = req.body; 
-    let photoUrl = req.body.photoUrl; 
+    const { name, email, phoneNumber, password } = req.body;
+    let photoUrl = req.body.photoUrl;
 
     if (req.file) {
       photoUrl = `/uploads/${req.file.filename}`;
     }
 
-    const updateData = { name, email, phoneNumber, photoUrl };
-    
-    // Pastikan dipanggil dengan 2 parameter!
-    const result = await service.updateMyProfile(req.user.id, updateData);
-    
-    res.status(200).json({ success: true, data: result, message: 'Profil berhasil diperbarui' });
+    const result = await service.updateMyProfile(req.user.id, {
+      name,
+      email,
+      phoneNumber,
+      password,
+      photoUrl
+    });
+
+    res.status(200).json({
+      success: true,
+      data: result,
+      message: 'Profil berhasil diperbarui'
+    });
   } catch (error) {
-    // Error di console.log agar kita bisa lihat baris persisnya di terminal
-    console.error("Error Update Profile:", error); 
+    console.error('Error Update Profile:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -82,13 +146,20 @@ const updateRolePermissions = async (req, res) => {
   try {
     const { id } = req.params;
     const { permissions } = req.body;
-    
+
     if (!permissions) {
-      return res.status(400).json({ success: false, message: "Data permissions (JSON) wajib diisi" });
+      return res.status(400).json({
+        success: false,
+        message: 'Data permissions (JSON) wajib diisi'
+      });
     }
 
     const result = await service.updateRolePermissions(id, permissions);
-    res.status(200).json({ success: true, data: result, message: 'Hak akses berhasil diperbarui' });
+    res.status(200).json({
+      success: true,
+      data: result,
+      message: 'Hak akses berhasil diperbarui'
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -98,7 +169,9 @@ module.exports = {
   getMyProfile,
   updateMyProfile,
   getAllUsers,
+  createUser,
+  updateUser,
+  deleteUser,
   getAllRoles,
-  updateRolePermissions,
-  createUser
+  updateRolePermissions
 };

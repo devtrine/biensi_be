@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('./controller');
-const { authenticate } = require('../../middleware/auth'); // Sesuaikan path-nya
+const { authenticate, checkPermission } = require('../../middleware/auth'); 
 
 router.use(authenticate);
 
-router.get('/summary', controller.getSummary);
+// PASANG GEMBOKNYA DI SINI! (Wajib punya izin view di modul dashboard)
+router.get('/summary', checkPermission('dashboard', 'view'), controller.getSummary);
 
 module.exports = router;

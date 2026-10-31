@@ -8,7 +8,15 @@ http:
   url: http://localhost:5000/api/v1/administration/users
   body:
     type: json
-    data: '{ "name": "Budi HR", "email": "budi@biensi.co.id", "password": "Budi123" }'
+    data: |-
+      {
+        "name": "kuru",
+        "email": "kuru@gmail.com",
+        "password": "kuru123",
+        "roleId": 4, 
+        "phoneNumber": "08123456789",
+        "isActive": true
+      }
   auth: inherit
 
 settings:

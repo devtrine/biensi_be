@@ -2,30 +2,29 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('./controller');
-const { authenticate } = require('../../middleware/auth');
+const { authenticate, checkPermission } = require('../../middleware/auth'); // Inject middleware
 const uploader = require('../../middleware/upload');
 
 router.use(authenticate);
 
-// Manajemen Periode
-router.get('/', controller.getAllPeriods);
-router.post('/', controller.createPeriod);
-router.get('/produktivitas/active', controller.getActiveStorePerformance);
-router.get('/produktivitas/:periodId', controller.getStorePerformanceByPeriod);
-router.get('/:periodId/summary', controller.getSummary);
-router.post('/:periodId/snapshots/generate', controller.generateMonthlySnapshot);
+// Manajemen Periode & Snapshot
+router.get('/', checkPermission('dashboard', 'view'), controller.getAllPeriods);
+router.post('/', checkPermission('dashboard', 'create'), controller.createPeriod);
+router.get('/produktivitas/active', checkPermission('productivity', 'view'), controller.getActiveStorePerformance);
+router.get('/produktivitas/:periodId', checkPermission('productivity', 'view'), controller.getStorePerformanceByPeriod);
+router.get('/:periodId/summary', checkPermission('dashboard', 'view'), controller.getSummary);
+router.post('/:periodId/snapshots/generate', checkPermission('employees', 'create'), controller.generateMonthlySnapshot);
 
-// Endpoint Upload File (Gunakan middleware upload terpusat)
-router.post('/:periodId/attendance', uploader.upload.single('file'), controller.uploadAttendance);
-router.post('/:periodId/sales', uploader.upload.single('file'), controller.uploadSales);
+// [GEMBOK IMPORT] Semua jenis upload file dikunci oleh satu pintu: modul 'import'
+router.post('/:periodId/attendance', checkPermission('import', 'create'), uploader.upload.single('file'), controller.uploadAttendance);
+router.post('/:periodId/sales', checkPermission('import', 'create'), uploader.upload.single('file'), controller.uploadSales);
+router.post('/bulk-attendance', checkPermission('import', 'create'), uploader.upload.single('file'), controller.uploadAttendanceUniversal);
+router.post('/bulk-sales', checkPermission('import', 'create'), uploader.upload.single('file'), controller.uploadSalesUniversal);
 
-router.get('/attendance', controller.getAllAttendance);
-router.get('/sales', controller.getAllSales);
-router.get('/:periodId/attendance', controller.getAttendance);
-router.get('/:periodId/sales', controller.getSales);
-
-// Universal Bulk
-router.post('/bulk-attendance', uploader.upload.single('file'), controller.uploadAttendanceUniversal);
-router.post('/bulk-sales', uploader.upload.single('file'), controller.uploadSalesUniversal);
+// Pembacaan Data Spesifik
+router.get('/attendance', checkPermission('attendance', 'view'), controller.getAllAttendance);
+router.get('/sales', checkPermission('productivity', 'view'), controller.getAllSales);
+router.get('/:periodId/attendance', checkPermission('attendance', 'view'), controller.getAttendance);
+router.get('/:periodId/sales', checkPermission('productivity', 'view'), controller.getSales);
 
 module.exports = router;
