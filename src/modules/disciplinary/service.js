@@ -105,14 +105,16 @@ const importBulkSP = async (filePath) => {
           col.name = c;
           dataStartRow = Math.max(dataStartRow, r + 1);
         }
-        else if (cell.includes('EMPLOYEENO')) col.empNo = c;
-        else if (cell.includes('REFERENCENO')) { col.refNo = c; dataStartRow = Math.max(dataStartRow, r + 1); }
-        else if (cell.includes('STORENAME') || cell.includes('SHOWROOM')) col.store = c;
+        else if (cell.includes('EMPLOYEENO') || cell.includes('NIK')) col.empNo = c;
+        else if (cell.includes('REFERENCENO') || cell.includes('NOREF')) { col.refNo = c; dataStartRow = Math.max(dataStartRow, r + 1); }
+        else if (cell.includes('STORENAME') || cell.includes('SHOWROOM') || cell.includes('NAMATOKO') || cell.includes('TOKO')) col.store = c;
+        else if (cell.includes('AREAREGIONAL') || cell.includes('REGIONAL') || cell.includes('AREA')) col.area = c;
         else if (cell === 'DIVISI') col.divisi = c;
         else if (cell.includes('DEPARTEMENT') || cell.includes('DEPARTMENT')) col.dept = c;
-        else if (cell.includes('DISCIPLINESNAME')) { col.discName = c; dataStartRow = Math.max(dataStartRow, r + 1); }
-        else if (cell.includes('STARTDATE')) col.startDate = c;
-        else if (cell.includes('ENDDATE')) col.endDate = c;
+        else if (cell.includes('POSITION') || cell.includes('JABATAN')) col.position = c;
+        else if (cell.includes('DISCIPLINESNAME') || cell.includes('JENISSP')) { col.discName = c; dataStartRow = Math.max(dataStartRow, r + 1); }
+        else if (cell.includes('STARTDATE') || cell.includes('TANGGALMULAI')) col.startDate = c;
+        else if (cell.includes('ENDDATE') || cell.includes('TANGGALSELESAI') || cell.includes('TANGGALBERAKHIR')) col.endDate = c;
         else if (cell.includes('NONTATATERTIB')) col.nonTataTertib = c;
         else if (cell.includes('TATATERTIB')) col.tataTertib = c;
         else if (cell === 'PERIODE') col.periode = c;
@@ -140,8 +142,10 @@ const importBulkSP = async (filePath) => {
         employeeName: empName,
         employeeNo: col.empNo !== undefined ? row[col.empNo] : null,
         storeName: col.store !== undefined ? row[col.store] : null,
+        region: col.area !== undefined ? row[col.area] : null,
         divisionName: col.divisi !== undefined ? row[col.divisi] : null,
         departmentName: col.dept !== undefined ? row[col.dept] : null,
+        positionName: col.position !== undefined ? row[col.position] : null,
         referenceNo: col.refNo !== undefined ? row[col.refNo] : null,
         disciplineName: col.discName !== undefined ? row[col.discName] : 'Surat Peringatan',
         startDate,

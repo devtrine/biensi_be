@@ -20,7 +20,16 @@ const resolveRelations = async (row) => {
     });
     if (!store) {
       store = await prisma.store.create({
-        data: { storeName: cleanStoreName, storeCode: `STR-${Date.now()}-${Math.floor(Math.random() * 100)}` }
+        data: {
+          storeName: cleanStoreName,
+          storeCode: `STR-${Date.now()}-${Math.floor(Math.random() * 100)}`,
+          region: normalizeText(row.region) || null
+        }
+      });
+    } else if (row.region) {
+      await prisma.store.update({
+        where: { id: store.id },
+        data: { region: normalizeText(row.region) }
       });
     }
     storeId = store.id;
