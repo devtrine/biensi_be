@@ -56,12 +56,20 @@ const classifyEmployeeLevel = (emp) => {
   const titleStr = String(emp.jobTitle || '').trim().toUpperCase();
   const comb = `${levelStr} ${nameStr} ${titleStr}`;
 
+  const isCreativeOrArtDirector = comb.includes('CREATIVE DIRECTOR') || comb.includes('ART DIRECTOR') || comb.includes('DIRECTOR OF PHOTOGRAPHY');
+
   if (
-    comb.includes('DIREKTUR') ||
-    comb.includes('DIRECTOR') ||
-    comb.includes('BOD') ||
-    comb.includes('CEO') ||
-    comb.includes('PRESIDENT')
+    !isCreativeOrArtDirector && (
+      comb.includes('DIREKTUR') ||
+      comb.includes('PRESIDENT DIRECTOR') ||
+      comb.includes('MANAGING DIRECTOR') ||
+      comb.includes('EXECUTIVE DIRECTOR') ||
+      /\bDIRECTOR\b/.test(comb) ||
+      /\bBOD\b/.test(comb) ||
+      /\bCEO\b/.test(comb) ||
+      comb.includes('CHIEF EXECUTIVE') ||
+      comb.includes('PRESIDENT')
+    )
   ) {
     return 'Direktur/CEO';
   }
@@ -93,7 +101,7 @@ const classifyEmployeeLevel = (emp) => {
     return 'Asst Head';
   }
 
-  if (comb.includes('HEAD') || levelStr === 'HEAD' || comb.includes('KEPALA DEPT') || comb.includes('KEPALA DIVISI')) {
+  if (comb.includes('HEAD') || levelStr === 'HEAD' || comb.includes('KEPALA DEPT') || comb.includes('KEPALA DIVISI') || isCreativeOrArtDirector) {
     return 'Head';
   }
 
@@ -394,6 +402,7 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
     byGender: { 'LAKI-LAKI': 0, PEREMPUAN: 0 },
     byEmploymentType: {},
     byEmployeeLevel: activeScopeStats.byEmployeeLevel,
+    byEmployeeLevel14: activeScopeStats.byEmployeeLevel14,
     byLevelStandard: activeScopeStats.byLevelStandard,
     byAgeBracket: activeScopeStats.byAgeBracket,
     byTenureBracket: activeScopeStats.byTenureBracket,
@@ -927,13 +936,57 @@ const getMainExecutiveDashboard = async (filters = {}) => {
     annualTurnoverRate: annualTurnoverRate
   };
 
+  const trajectoryPeriods = await prisma.reportingPeriod.findMany({
+    where: { month: month },
+    orderBy: { year: 'asc' }
+  });
+
+  const trajectoryPeriodIds = trajectoryPeriods.map(p => p.id);
+  const trajectorySnapshots = await prisma.employeeMonthlySnapshot.findMany({
+    where: { periodId: { in: trajectoryPeriodIds } },
+    select: {
+      periodId: true,
+      employee: {
+        select: {
+          storeId: true
+        }
+      }
+    }
+  });
+
+  const periodSnapMap = {};
+  trajectorySnapshots.forEach(s => {
+    if (!periodSnapMap[s.periodId]) periodSnapMap[s.periodId] = { store: 0, hq: 0, total: 0 };
+    if (s.employee?.storeId) periodSnapMap[s.periodId].store++;
+    else periodSnapMap[s.periodId].hq++;
+    periodSnapMap[s.periodId].total++;
+  });
+
+  const headcountTrajectory = trajectoryPeriods.map(p => {
+    const stats = periodSnapMap[p.id] || { store: 0, hq: 0, total: 0 };
+    return {
+      periodId: p.id,
+      year: p.year,
+      month: p.month,
+      store: stats.store,
+      hq: stats.hq,
+      total: stats.total
+    };
+  });
+
+  summaryData.headcountTrajectory = headcountTrajectory;
+  if (summaryData.demographics) {
+    summaryData.demographics.headcountTrajectory = headcountTrajectory;
+  }
+
   return {
     filters: { year, month, scope },
     summary: summaryData,
     storePerformance: storeData.data,
     turnoverAndRetention: turnoverData.data,
     industrialAndSp,
-    compliance: industrialAndSp.compliancePermits // Tersedia juga di root agar mudah diakses FE untuk Matriks #25
+    compliance: industrialAndSp.compliancePermits,
+    headcountTrajectory
   };
 };
 

@@ -68,6 +68,19 @@ const getMovementType = (reason) => {
   return isInv ? 'INVOLUNTARY' : 'VOLUNTARY';
 };
 
+const resolveMovementType = (row, defaultReason) => {
+  const tipe = String(
+    getValue(row, 'tipeturnover') ||
+    getValue(row, 'jeniskaryawankeluar') ||
+    getValue(row, 'jenispemisahankaryawan') ||
+    ''
+  ).trim().toUpperCase();
+  if (tipe.includes('VOLUNTARY') && !tipe.includes('NON') && !tipe.includes('INVOLUNTARY')) return 'VOLUNTARY';
+  if (tipe.includes('INVOLUNTARY') || tipe.includes('NONVOLUNTARY') || tipe.includes('PHK')) return 'INVOLUNTARY';
+  if (tipe.includes('KONTRAK') || String(defaultReason).toUpperCase().includes('HABIS KONTRAK')) return 'CONTRACT_END';
+  return getMovementType(defaultReason);
+};
+
 // === MAIN BULK IMPORT LOGIC ===
 const importBulkMovement = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
@@ -111,12 +124,47 @@ const importBulkMovement = async (filePath) => {
     const h1Upper = headers1.join('').toUpperCase();
     const h2Upper = headers2.join('').toUpperCase();
     const combinedHeaderStr = h1Upper + h2Upper;
+    const isNewTurnoverFormat = combinedHeaderStr.includes('TIPETURNOVER') || combinedHeaderStr.includes('NIKKARYAWAN') || combinedHeaderStr.includes('ALASANKELUAR');
     const isFormatToko = h1Upper.includes('SHOWROOM') || h1Upper.includes('REGIONAL');
     const isFormatHO = (combinedHeaderStr.includes('KATEGORIPHK') || (h1Upper.includes('DIVISI') && (combinedHeaderStr.includes('RESIGN') || combinedHeaderStr.includes('PHK'))));
 
     let rawExcelData = [];
 
-    if (isFormatToko) {
+    if (isNewTurnoverFormat) {
+      rawExcelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { range: headerRowIndex });
+      const mappedData = rawExcelData.map(row => {
+        const reason = String(
+          getValue(row, 'kategoriphk') ||
+          getValue(row, 'alasankeluar') ||
+          getValue(row, 'alasan') ||
+          getValue(row, 'kategoripemisahankaryawan') ||
+          'LAINNYA'
+        ).trim().toUpperCase();
+        const moveDate = excelDateToJSDate(
+          getValue(row, 'tanggalresign/habiskontrak') ||
+          getValue(row, 'tglresign/habiskontrak') ||
+          getValue(row, 'tanggalresign') ||
+          getValue(row, 'tglresign')
+        );
+        const movementType = resolveMovementType(row, reason);
+        const storeName = getValue(row, 'namatoko') || getValue(row, 'showroom/counter') || getValue(row, 'showroom') || getValue(row, 'toko');
+        const region = getValue(row, 'arearegional') || getValue(row, 'area') || getValue(row, 'regional');
+        return {
+          employeeNo: getValue(row, 'nikkaryawan') || getValue(row, 'nik') || getValue(row, 'employeeno') || null,
+          employeeName: getValue(row, 'namakaryawan'),
+          divisionName: getValue(row, 'divisi'),
+          departmentName: getValue(row, 'departemen'),
+          positionName: getValue(row, 'jabatan') || getValue(row, 'leveljabatan') || getValue(row, 'jabatan/position') || null,
+          joinDate: excelDateToJSDate(getValue(row, 'tanggalmasukkerja') || getValue(row, 'tglmasukkerja')),
+          movementDate: moveDate,
+          reason: reason,
+          movementType: movementType,
+          storeName: storeName || null,
+          region: region || null
+        };
+      });
+      allFormattedData.push(...mappedData);
+    } else if (isFormatToko) {
       const isSecondRowBlank = headers2.length === 0 || headers2.every(v => v === null || v === undefined || String(v).trim() === '');
       const hasMergedReasonSubHeader = !h1Upper.replace(/\s+/g, '').includes('RESIGNSOP') && (h2Upper.includes('SOP') || h2Upper.includes('PHK'));
       const isTwoRowHeader = isSecondRowHeader(isSecondRowBlank, hasMergedReasonSubHeader);
@@ -192,6 +240,7 @@ const importBulkMovement = async (filePath) => {
   const finalData = allFormattedData.filter(data =>
     data.employeeName &&
     String(data.employeeName).trim() !== '' &&
+    !/^\d+$/.test(String(data.employeeName).trim()) &&
     data.movementDate instanceof Date
   );
 
