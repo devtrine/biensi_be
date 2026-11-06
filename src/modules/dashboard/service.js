@@ -49,8 +49,9 @@ const LEVEL_TO_GROUP = {
   'Sales Advisor': 'staff'
 };
 
-const classifyEmployeeLevel = (emp) => {
+const classifyEmployeeLevel = (emp, item = null) => {
   if (!emp) return 'Staff';
+  const isStore = Boolean(emp.storeId || emp.store || (item && item.storeId));
   const levelStr = String(emp.position?.employeeLevel || '').trim().toUpperCase();
   const nameStr = String(emp.position?.name || '').trim().toUpperCase();
   const titleStr = String(emp.jobTitle || '').trim().toUpperCase();
@@ -97,7 +98,7 @@ const classifyEmployeeLevel = (emp) => {
     return 'Manager';
   }
 
-  if (comb.includes('ASST HEAD') || comb.includes('ASSISTANT HEAD') || comb.includes('DEPUTY HEAD')) {
+  if (comb.includes('ASST HEAD') || comb.includes('ASSISTANT HEAD') || comb.includes('DEPUTY HEAD') || levelStr === 'ASHEAD') {
     return 'Asst Head';
   }
 
@@ -105,23 +106,49 @@ const classifyEmployeeLevel = (emp) => {
     return 'Head';
   }
 
-  if (
-    comb.includes('ASST STORE LEADER') ||
-    comb.includes('ASSISTANT STORE LEADER') ||
-    comb.includes('ASST. STORE LEADER') ||
-    comb.includes('ASST SL') ||
-    comb.includes('WAKIL KEPALA TOKO')
-  ) {
-    return 'Asst Store Leader';
-  }
+  // Level khusus toko (Store / Retail Network) - Hanya berlaku untuk karyawan yang bertugas di Store
+  if (isStore) {
+    if (
+      comb.includes('ASST STORE LEADER') ||
+      comb.includes('ASSISTANT STORE LEADER') ||
+      comb.includes('ASST. STORE LEADER') ||
+      comb.includes('ASST SL') ||
+      comb.includes('WAKIL KEPALA TOKO') ||
+      levelStr === 'ASST SL' ||
+      levelStr === 'ASST STORE LEADER'
+    ) {
+      return 'Asst Store Leader';
+    }
 
-  if (
-    comb.includes('STORE LEADER') ||
-    comb.includes('KEPALA TOKO') ||
-    /\bSL\b/.test(nameStr) ||
-    (/\bSL\b/.test(levelStr) && emp.storeId)
-  ) {
-    return 'Store Leader';
+    if (
+      comb.includes('STORE LEADER') ||
+      comb.includes('KEPALA TOKO') ||
+      /\bSL\b/.test(nameStr) ||
+      /\bSL\b/.test(levelStr)
+    ) {
+      return 'Store Leader';
+    }
+
+    if (comb.includes('VM STORE') || comb.includes('VISUAL MERCHANDIS') || /\bVM\b/.test(nameStr) || levelStr === 'VM' || levelStr === 'VM STORE') {
+      return 'Vm Store';
+    }
+
+    if (comb.includes('KASIR') || comb.includes('CASHIER') || levelStr === 'KASIR' || levelStr === 'CASHIER') {
+      return 'Kasir';
+    }
+
+    if (
+      comb.includes('SALES ADVISOR') ||
+      /\bSA\b/.test(comb) ||
+      comb.includes('PRAMUNIAGA') ||
+      comb.includes('SPG') ||
+      comb.includes('SPB') ||
+      comb.includes('SHOPKEEPER') ||
+      levelStr === 'SALES ADVISOR' ||
+      levelStr === 'SA'
+    ) {
+      return 'Sales Advisor';
+    }
   }
 
   if (
@@ -132,25 +159,6 @@ const classifyEmployeeLevel = (emp) => {
     comb.includes('KOORDINATOR')
   ) {
     return 'Leader';
-  }
-
-  if (comb.includes('VM STORE') || comb.includes('VISUAL MERCHANDIS') || /\bVM\b/.test(nameStr)) {
-    return 'Vm Store';
-  }
-
-  if (comb.includes('KASIR') || comb.includes('CASHIER')) {
-    return 'Kasir';
-  }
-
-  if (
-    comb.includes('SALES ADVISOR') ||
-    /\bSA\b/.test(comb) ||
-    comb.includes('PRAMUNIAGA') ||
-    comb.includes('SPG') ||
-    comb.includes('SPB') ||
-    comb.includes('SHOPKEEPER')
-  ) {
-    return 'Sales Advisor';
   }
 
   if (
@@ -276,7 +284,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     }
 
     // Klasifikasi Level Jabatan (14 Tingkat Standar Sesuai Data Berjalan)
-    const levelCategory = classifyEmployeeLevel(emp);
+    const levelCategory = classifyEmployeeLevel(emp, item);
     byEmployeeLevel14[levelCategory] = (byEmployeeLevel14[levelCategory] || 0) + 1;
     const groupKey = LEVEL_TO_GROUP[levelCategory] || 'staff';
 
