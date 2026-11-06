@@ -9,13 +9,23 @@ const excelDateToJSDate = (serial) => {
 
   let date;
   if (typeof serial === 'string') {
-    date = new Date(serial);
-  } else {
+    const trimmed = serial.trim();
+    if (!trimmed) return null;
+    // Dukungan format DD/MM/YYYY atau DD-MM-YYYY
+    const dmyMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (dmyMatch) {
+      date = new Date(Date.UTC(parseInt(dmyMatch[3], 10), parseInt(dmyMatch[2], 10) - 1, parseInt(dmyMatch[1], 10)));
+    } else {
+      date = new Date(trimmed);
+    }
+  } else if (typeof serial === 'number') {
     const utc_days = Math.floor(serial - 25569);
     date = new Date(utc_days * 86400 * 1000);
+  } else {
+    date = new Date(serial);
   }
 
-  return isNaN(date.getTime()) ? null : date;
+  return (date instanceof Date && !isNaN(date.getTime())) ? date : null;
 };
 
 // Menghapus semua spasi, simbol, & enter dari nama kolom Excel
@@ -164,7 +174,13 @@ const processExcelImport = async (filePath) => {
     }
 
     const sheetData = xlsx.utils.sheet_to_json(sheet, { range: headerRowIdx });
-    rawExcelData.push(...sheetData);
+    sheetData.forEach((row, idx) => {
+      rawExcelData.push({
+        ...row,
+        _sheetName: sheetName,
+        _excelRowNumber: headerRowIdx + 2 + idx
+      });
+    });
   }
 
   const formattedData = rawExcelData.map(row => {
@@ -179,6 +195,8 @@ const processExcelImport = async (filePath) => {
     const rowPeriod = parseMonthYearValue(rawBulan, rawTahun, sheetFallbackPeriod);
 
     return {
+      rowNumber: row._excelRowNumber || null,
+      sheetName: row._sheetName || null,
       employeeNo: String(getValue(row, 'employeeno') || getValue(row, 'nik') || getValue(row, 'idkaryawan') || ''),
       fullName: getValue(row, 'namakaryawan') || getValue(row, 'nama') || getValue(row, 'name') || 'TIDAK ADA NAMA',
       // Poin 2: Dukungan penuh berbagai nama kolom Gender

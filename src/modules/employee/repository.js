@@ -139,9 +139,15 @@ const processBulkImport = async (rawData) => {
       const storeRegion = normalizeText(row.storeRegion);
       const storeType = normalizeText(row.storeType);
 
+      // Batasi panjang teks agar tidak melebihi batasan varchar database
+      const safeDivName = divName ? divName.substring(0, 95) : null;
+      const safeDeptName = deptName ? deptName.substring(0, 95) : null;
+      const safeUnitName = unitName ? unitName.substring(0, 95) : null;
+      const safePosName = posName ? posName.substring(0, 95) : null;
+
       // Fallback nama jika kosong (seperti baris pertama A15161718 di Excel HO)
       const fullName = row.fullName && String(row.fullName).trim() !== ''
-        ? String(row.fullName).trim().toUpperCase()
+        ? String(row.fullName).trim().toUpperCase().substring(0, 190)
         : `KARYAWAN ${empNo}`;
 
       // 2. Antisipasi NIK Ganda antara HO dan Toko (Contoh: A15161760 dipakai Bagus Prayudo & Riko)
@@ -157,29 +163,39 @@ const processBulkImport = async (rawData) => {
       // 3. Resolve Master Data (Find or Create dengan nama yang sudah dinormalisasi)
       let divisionId = null, departmentId = null, unitId = null, positionId = null, storeId = null;
 
-      if (divName) {
-        let div = await prisma.division.findFirst({ where: { name: { equals: divName, mode: 'insensitive' } } });
-        if (!div) div = await prisma.division.create({ data: { name: divName, code: `DIV-${Date.now()}` } });
+      if (safeDivName) {
+        let div = await prisma.division.findFirst({ where: { name: { equals: safeDivName, mode: 'insensitive' } } });
+        if (!div) {
+          const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+          div = await prisma.division.create({ data: { name: safeDivName, code: `DIV-${Date.now()}-${rand}` } });
+        }
         divisionId = div.id;
       }
 
-      if (deptName && divisionId) {
-        let dept = await prisma.department.findFirst({ where: { name: { equals: deptName, mode: 'insensitive' } } });
-        if (!dept) dept = await prisma.department.create({ data: { name: deptName, code: `DEPT-${Date.now()}`, divisionId } });
+      if (safeDeptName && divisionId) {
+        let dept = await prisma.department.findFirst({ where: { name: { equals: safeDeptName, mode: 'insensitive' } } });
+        if (!dept) {
+          const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+          dept = await prisma.department.create({ data: { name: safeDeptName, code: `DEPT-${Date.now()}-${rand}`, divisionId } });
+        }
         departmentId = dept.id;
       }
 
-      if (unitName && departmentId) {
-        let unit = await prisma.unit.findFirst({ where: { name: { equals: unitName, mode: 'insensitive' } } });
-        if (!unit) unit = await prisma.unit.create({ data: { name: unitName, code: `UNT-${Date.now()}`, departmentId } });
+      if (safeUnitName && departmentId) {
+        let unit = await prisma.unit.findFirst({ where: { name: { equals: safeUnitName, mode: 'insensitive' } } });
+        if (!unit) {
+          const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+          unit = await prisma.unit.create({ data: { name: safeUnitName, code: `UNT-${Date.now()}-${rand}`, departmentId } });
+        }
         unitId = unit.id;
       }
 
-      if (posName) {
-        let pos = await prisma.position.findFirst({ where: { name: { equals: posName, mode: 'insensitive' } } });
+      if (safePosName) {
+        let pos = await prisma.position.findFirst({ where: { name: { equals: safePosName, mode: 'insensitive' } } });
         if (!pos) {
+          const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
           pos = await prisma.position.create({
-            data: { name: posName, code: `POS-${Date.now()}`, employeeLevel: levelName }
+            data: { name: safePosName, code: `POS-${Date.now()}-${rand}`, employeeLevel: levelName }
           });
         } else if (row.levelName && pos.employeeLevel !== levelName) {
           // Pastikan level jabatan ter-update jika sebelumnya masih default
@@ -221,21 +237,28 @@ const processBulkImport = async (rawData) => {
         return isNaN(num) ? null : Math.round(num);
       })();
 
-      // 5. Validasi Tanggal Habis Kontrak (Abaikan jika status TETAP atau tahun di bawah 2020 seperti 1957-05-20)
+      // 5. Validasi Tanggal (Aman terhadap Invalid Date)
       const empType = normalizeText(row.employmentType);
       let validEndDate = row.endDate ? new Date(row.endDate) : null;
+      if (validEndDate && isNaN(validEndDate.getTime())) validEndDate = null;
       if (empType === 'TETAP' || (validEndDate && validEndDate.getFullYear() < 2020)) {
         validEndDate = null;
       }
+
+      let validBirthDate = row.birthDate ? new Date(row.birthDate) : null;
+      if (validBirthDate && isNaN(validBirthDate.getTime())) validBirthDate = null;
+
+      let validJoinDate = row.joinDate ? new Date(row.joinDate) : new Date();
+      if (validJoinDate && isNaN(validJoinDate.getTime())) validJoinDate = new Date();
 
       const basePayload = {
         employeeNo: empNo,
         fullName: fullName,
         gender: normalizeGender(row.gender),
-        birthDate: row.birthDate ? new Date(row.birthDate) : null,
+        birthDate: validBirthDate,
         educationLevel: normalizeText(row.educationLevel),
         employmentType: empType,
-        joinDate: row.joinDate ? new Date(row.joinDate) : new Date(),
+        joinDate: validJoinDate,
         endDate: validEndDate,
         status: (validEndDate && validEndDate < new Date()) ? 'INACTIVE' : 'ACTIVE',
         bpjsKetenagakerjaan: Boolean(row.bpjsKetenagakerjaan),
@@ -267,7 +290,20 @@ const processBulkImport = async (rawData) => {
       results.sukses++;
     } catch (error) {
       results.gagal++;
-      results.errorList.push(`Error NIK ${row.employeeNo}: ${error.message}`);
+      const rowNum = row.rowNumber ? `Baris ${row.rowNumber}` : 'Baris Data';
+      const cleanEmpNo = row.employeeNo || '-';
+      const cleanName = fullName || '-';
+      let reason = error.message || 'Kesalahan pemrosesan data';
+      if (reason.includes('Unique constraint failed')) {
+        reason = 'Data duplikat pada database';
+      } else if (reason.includes('too long for type')) {
+        reason = 'Teks pada kolom melebihi batas panjang karakter';
+      } else if (reason.includes('Invalid Date') || reason.includes('DateTime')) {
+        reason = 'Format tanggal tidak valid';
+      } else if (reason.includes('foreign key constraint')) {
+        reason = 'Relasi master organisasi tidak valid';
+      }
+      results.errorList.push(`${rowNum} (NIK: ${cleanEmpNo}, Nama: ${cleanName}): ${reason}`);
     }
   }
   return results;
