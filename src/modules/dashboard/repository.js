@@ -233,7 +233,27 @@ const getIndustrialAndSpSummary = async (year, month = null) => {
       include: { store: true }
     }),
     prisma.industrialRelationCase.findMany({
-      include: { employee: true }
+      where: {
+        OR: [
+          {
+            startDate: {
+              gte: new Date(Date.UTC(numYear - 1, 11, 30)),
+              lte: refDate
+            }
+          },
+          {
+            endDate: {
+              gte: new Date(Date.UTC(numYear, 0, 1)),
+              lte: new Date(Date.UTC(numYear, 11, 31, 23, 59, 59))
+            }
+          },
+          {
+            startDate: null,
+            endDate: null
+          }
+        ]
+      },
+      include: { employee: true, store: true }
     }),
     prisma.employee.findMany({
       where: {
@@ -329,13 +349,26 @@ const getIndustrialAndSpSummary = async (year, month = null) => {
   });
 
   const countDisputes = (list) => {
-    const res = { total: list.length, selesai: 0, bipartit: 0, mediasi: 0, phi: 0 };
+    const res = { total: list.length, selesai: 0, proses: 0, bipartit: 0, mediasi: 0, phi: 0 };
     list.forEach(c => {
+      const cat = String(c.caseCategory || '').toUpperCase();
       const st = String(c.status || '').toUpperCase();
-      if (st.includes('CLOSE') || st.includes('SELESAI')) res.selesai++;
-      else if (st.includes('MEDIASI') || st.includes('DISNAKER')) res.mediasi++;
-      else if (st.includes('PHI')) res.phi++;
-      else res.bipartit++;
+
+      // 1. Status Penyelesaian Kasus
+      if (st.includes('CLOSE') || st.includes('SELESAI')) {
+        res.selesai++;
+      } else {
+        res.proses++;
+      }
+
+      // 2. Kategori / Jalur Penyelesaian Perselisihan (Independen dari status)
+      if (cat.includes('MEDIASI') || cat.includes('DISNAKER') || cat.includes('PIHAK')) {
+        res.mediasi++;
+      } else if (cat.includes('PHI')) {
+        res.phi++;
+      } else {
+        res.bipartit++;
+      }
     });
     return res;
   };
@@ -442,8 +475,8 @@ const getIndustrialAndSpSummary = async (year, month = null) => {
     },
     disputes: {
       corporate: countDisputes(irCases),
-      hq: countDisputes(irCases.filter(c => !c.employee?.storeId)),
-      store: countDisputes(irCases.filter(c => c.employee?.storeId))
+      hq: countDisputes(irCases.filter(c => !c.storeId && !c.employee?.storeId)),
+      store: countDisputes(irCases.filter(c => Boolean(c.storeId || c.employee?.storeId)))
     },
     overdueContracts: {
       corporate: overdueContracts.length,

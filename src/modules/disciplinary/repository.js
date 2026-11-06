@@ -309,18 +309,60 @@ const processBulkBipartit = async (parsedData) => {
     try {
       const rel = await resolveRelations(row);
       const ketUpper = String(row.keterangan || '').toUpperCase();
-      const isFinished = Boolean(row.endDate) || ketUpper.includes('SELESAI');
-      const caseStatus = isFinished ? 'SELESAI' : 'PROSES MEDIASI';
+      const rawStatusUpper = String(row.status || '').toUpperCase();
+
+      let caseStatus = 'DALAM PROSES';
+      if (rawStatusUpper) {
+        if (rawStatusUpper.includes('SELESAI') || rawStatusUpper.includes('CLOSE') || rawStatusUpper.includes('SEPAKAT')) {
+          caseStatus = 'SELESAI';
+        } else if (rawStatusUpper.includes('MEDIASI') || rawStatusUpper.includes('DISNAKER')) {
+          caseStatus = 'PROSES MEDIASI';
+        } else if (rawStatusUpper.includes('BIPARTIT')) {
+          caseStatus = 'PROSES BIPARTIT';
+        } else if (rawStatusUpper.includes('PHI')) {
+          caseStatus = 'PROSES PHI';
+        } else {
+          caseStatus = row.status;
+        }
+      } else {
+        const isFinished = Boolean(row.endDate) || ketUpper.includes('SELESAI') || ketUpper.includes('CLOSE');
+        if (isFinished) {
+          caseStatus = 'SELESAI';
+        } else {
+          const catUpper = String(row.category || '').toUpperCase();
+          if (catUpper.includes('MEDIASI') || catUpper.includes('DISNAKER') || catUpper.includes('PIHAK')) {
+            caseStatus = 'PROSES MEDIASI';
+          } else if (catUpper.includes('PHI')) {
+            caseStatus = 'PROSES PHI';
+          } else {
+            caseStatus = 'PROSES BIPARTIT';
+          }
+        }
+      }
+
       const validStartDate = row.startDate || row.endDate || new Date();
 
-      // Cek apakah kasus Bipartit untuk karyawan & toko ini sudah ada
-      const existingCase = await prisma.industrialRelationCase.findFirst({
-        where: {
-          employeeId: rel.employeeId,
-          storeId: rel.storeId,
-          description: row.keterangan
+      // Sinkronkan storeId ke Employee jika belum terhubung
+      if (rel.employeeId && rel.storeId) {
+        const emp = await prisma.employee.findUnique({ where: { id: rel.employeeId } });
+        if (emp && !emp.storeId) {
+          await prisma.employee.update({
+            where: { id: rel.employeeId },
+            data: { storeId: rel.storeId }
+          });
         }
-      });
+      }
+
+      // Cek apakah kasus Bipartit untuk karyawan & keterangan ini sudah ada
+      let existingCase = null;
+      if (rel.employeeId) {
+        existingCase = await prisma.industrialRelationCase.findFirst({
+          where: {
+            employeeId: rel.employeeId,
+            ...(row.keterangan ? { description: row.keterangan } : {})
+          }
+        });
+      }
 
       const casePayload = {
         employeeId: rel.employeeId,
