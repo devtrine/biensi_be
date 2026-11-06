@@ -4,10 +4,12 @@ const repository = require('./repository');
 // Helper Tanggal Excel & Teks Bulan Indonesia ("Mei 2025", "januari 2022", "APRIL 2026")
 const parseFlexibleDate = (val) => {
   if (!val) return null;
-  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? null : new Date(Date.UTC(val.getFullYear(), val.getMonth(), val.getDate(), 12, 0, 0));
+  }
   if (typeof val === 'number') {
     const d = new Date(Math.round((val - 25569) * 86400 * 1000));
-    return isNaN(d.getTime()) ? null : d;
+    return isNaN(d.getTime()) ? null : new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0));
   }
 
   let str = String(val).trim();
@@ -20,9 +22,18 @@ const parseFlexibleDate = (val) => {
   };
 
   Object.keys(monthMap).forEach(indo => {
-    const regex = new RegExp(indo, 'ig');
+    const regex = new RegExp(`\\b${indo}\\b`, 'ig');
     str = str.replace(regex, monthMap[indo]);
   });
+
+  // Jika format DD/MM/YYYY atau DD-MM-YYYY
+  const dmyMatch = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    const year = parseInt(dmyMatch[3], 10);
+    return new Date(Date.UTC(year, month, day, 12, 0, 0));
+  }
 
   // Jika hanya tertulis nama bulan tanpa tahun (seperti "Januari" di spToko.xlsx), tambahkan 2026
   if (!/\d{4}/.test(str)) {
@@ -30,7 +41,8 @@ const parseFlexibleDate = (val) => {
   }
 
   const parsed = new Date(str);
-  return isNaN(parsed.getTime()) ? null : parsed;
+  if (isNaN(parsed.getTime())) return null;
+  return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 12, 0, 0));
 };
 
 const parseDecimal = (val) => {
@@ -280,18 +292,20 @@ const importBulkBipartit = async (filePath) => {
         const cell = String(row[c] || '').toUpperCase().replace(/\s+/g, '');
         if (!cell) continue;
 
-        if ((cell === 'NAME' || cell.includes('NAMAKARYAWAN')) && col.name === undefined) {
+        if ((cell === 'NAME' || cell === 'NAMA' || cell.includes('NAMAKARYAWAN') || cell.includes('NAMAPEGAWAI')) && col.name === undefined) {
           col.name = c;
           dataStartRow = Math.max(dataStartRow, r + 1);
         }
-        else if (cell.includes('EMPLOYEENO') && col.empNo === undefined) col.empNo = c;
-        else if ((cell.includes('STORENAME') || cell.includes('SHOWROOM')) && col.store === undefined) col.store = c;
+        else if ((cell.includes('EMPLOYEENO') || cell.includes('NIK') || cell.includes('NOINDUK') || cell.includes('NIP')) && col.empNo === undefined) col.empNo = c;
+        else if ((cell.includes('STORENAME') || cell.includes('SHOWROOM') || cell.includes('NAMATOKO') || cell.includes('TOKO') || cell.includes('UNITKERJA') || cell.includes('CABANG')) && col.store === undefined) col.store = c;
+        else if ((cell === 'KATEGORI' || cell === 'CATEGORY' || cell.includes('JENISKASUS') || cell.includes('TAHAPAN') || cell.includes('JALUR')) && col.categoryCol === undefined) col.categoryCol = c;
         else if (cell.includes('BIPARTIT') && col.bipartit === undefined) { col.bipartit = c; dataStartRow = Math.max(dataStartRow, r + 1); }
-        else if (cell.includes('MEDIASI') && col.mediasi === undefined) col.mediasi = c;
-        else if ((cell.includes('PIHAKKE3') || cell.includes('PIHAKKETIGA')) && col.pihak3 === undefined) col.pihak3 = c;
-        else if (cell.includes('KETERANGAN') && col.ket === undefined) col.ket = c;
-        else if (cell.includes('PERIODEAWAL') && col.startDate === undefined) col.startDate = c;
-        else if (cell.includes('PERIODESELESAI') && col.endDate === undefined) col.endDate = c;
+        else if ((cell.includes('MEDIASI') || cell.includes('DISNAKER')) && col.mediasi === undefined) col.mediasi = c;
+        else if ((cell.includes('PIHAKKE3') || cell.includes('PIHAKKETIGA') || cell.includes('PIHAK3')) && col.pihak3 === undefined) col.pihak3 = c;
+        else if ((cell === 'STATUS' || cell.includes('STATUSKASUS') || cell.includes('KONDISI')) && col.status === undefined) col.status = c;
+        else if ((cell.includes('KETERANGAN') || cell.includes('REMARK') || cell.includes('DESKRIPSI') || cell.includes('DETAIL')) && col.ket === undefined) col.ket = c;
+        else if ((cell.includes('PERIODEAWAL') || cell.includes('STARTDATE') || cell.includes('TGLAWAL') || cell.includes('TANGGALMULAI') || cell.includes('BULANAWAL')) && col.startDate === undefined) col.startDate = c;
+        else if ((cell.includes('PERIODESELESAI') || cell.includes('ENDDATE') || cell.includes('TGLAKHIR') || cell.includes('TANGGALSELESAI') || cell.includes('BULANSELESAI')) && col.endDate === undefined) col.endDate = c;
       }
     }
 
@@ -300,19 +314,28 @@ const importBulkBipartit = async (filePath) => {
     for (let r = dataStartRow; r < rawMatrix.length; r++) {
       const row = rawMatrix[r] || [];
       const empName = row[col.name];
-      if (!empName || String(empName).toUpperCase().includes('NAME')) continue;
+      if (!empName || String(empName).toUpperCase().includes('NAME') || String(empName).toUpperCase().includes('NAMA')) continue;
 
       const ketText = col.ket !== undefined && row[col.ket] ? String(row[col.ket]).trim() : null;
       const ketUpper = String(ketText || '').toUpperCase();
 
-      // PERBAIKAN: Cek checklist kolom dulu; jika kosong semua (seperti di kasus.xlsx), baca dari teks Keterangan!
+      // Cek kategori: checklist kolom, single kolom Kategori, atau teks keterangan
       let category = 'Bipartit';
       if (col.bipartit !== undefined && row[col.bipartit]) category = 'Bipartit';
       else if (col.mediasi !== undefined && row[col.mediasi]) category = 'Mediasi';
       else if (col.pihak3 !== undefined && row[col.pihak3]) category = 'Pihak ke 3';
+      else if (col.categoryCol !== undefined && row[col.categoryCol]) {
+        const catVal = String(row[col.categoryCol]).trim().toUpperCase();
+        if (catVal.includes('MEDIASI') || catVal.includes('DISNAKER')) category = 'Mediasi';
+        else if (catVal.includes('PIHAK')) category = 'Pihak ke 3';
+        else if (catVal.includes('PHI')) category = 'PHI';
+        else if (catVal.includes('BIPARTIT')) category = 'Bipartit';
+      }
       else if (ketUpper.includes('MEDIASI') || ketUpper.includes('DISNAKER')) category = 'Mediasi';
       else if (ketUpper.includes('PIHAK')) category = 'Pihak ke 3';
+      else if (ketUpper.includes('PHI')) category = 'PHI';
 
+      const rawStatus = col.status !== undefined && row[col.status] ? String(row[col.status]).trim() : null;
       const parsedStart = parseFlexibleDate(row[col.startDate]);
       const parsedEnd = parseFlexibleDate(row[col.endDate]);
 
@@ -321,6 +344,7 @@ const importBulkBipartit = async (filePath) => {
         employeeNo: col.empNo !== undefined ? row[col.empNo] : null,
         storeName: col.store !== undefined ? row[col.store] : null,
         category: category,
+        status: rawStatus,
         keterangan: ketText,
         startDate: parsedStart || parsedEnd, // Fallback jika Periode Awal kosong
         endDate: parsedEnd
