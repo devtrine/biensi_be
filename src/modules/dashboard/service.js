@@ -55,10 +55,33 @@ const classifyEmployeeLevel = (emp, item = null) => {
   const levelStr = String(emp.position?.employeeLevel || '').trim().toUpperCase();
   const nameStr = String(emp.position?.name || '').trim().toUpperCase();
   const titleStr = String(emp.jobTitle || '').trim().toUpperCase();
+  const deptStr = String(emp.department?.name || '').trim().toUpperCase();
   const comb = `${levelStr} ${nameStr} ${titleStr}`;
 
   const isCreativeOrArtDirector = comb.includes('CREATIVE DIRECTOR') || comb.includes('ART DIRECTOR') || comb.includes('DIRECTOR OF PHOTOGRAPHY');
 
+  // Deteksi General Manager atau Vice President (GM/VP)
+  const isVP = (
+    comb.includes('VICE PRESIDENT') ||
+    comb.includes('VICE-PRESIDENT') ||
+    comb.includes('VICE PRES') ||
+    /\b(VP|SVP|EVP|AVP)\b/.test(comb)
+  );
+
+  const isGM = (
+    comb.includes('GENERAL MANAGER') ||
+    comb.includes('GEN MGR') ||
+    comb.includes('GEN. MGR') ||
+    /\bGM\b/.test(comb) ||
+    deptStr.startsWith('GM ')
+  );
+
+  // GM atau VP diprioritaskan lebih dulu agar tidak tertelan ke Direktur/CEO (misal karena kata 'PRESIDENT' di 'VICE PRESIDENT')
+  if (isVP || isGM) {
+    return 'GM/VP';
+  }
+
+  // Deteksi Direktur / CEO / BOD / Dewan Komisaris
   if (
     !isCreativeOrArtDirector && (
       comb.includes('DIREKTUR') ||
@@ -69,19 +92,13 @@ const classifyEmployeeLevel = (emp, item = null) => {
       /\bBOD\b/.test(comb) ||
       /\bCEO\b/.test(comb) ||
       comb.includes('CHIEF EXECUTIVE') ||
-      comb.includes('PRESIDENT')
+      /\bPRESIDENT\b/.test(comb) ||
+      comb.includes('KOMISARIS') ||
+      comb.includes('COMMISSIONER') ||
+      comb.includes('COMMISIONER')
     )
   ) {
     return 'Direktur/CEO';
-  }
-
-  if (
-    comb.includes('GENERAL MANAGER') ||
-    /\bGM\b/.test(comb) ||
-    comb.includes('VICE PRESIDENT') ||
-    /\bVP\b/.test(comb)
-  ) {
-    return 'GM/VP';
   }
 
   if (
