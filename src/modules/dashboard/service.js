@@ -256,6 +256,11 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     management: { count: 0, ageSum: 0, ageCnt: 0, tenSum: 0, tenCnt: 0 }
   };
 
+  // Akumulator BPJS
+  let bpjsRegisteredBoth = 0;
+  let bpjsRegisteredEither = 0;
+  let bpjsUnregistered = 0;
+
   empList.forEach(item => {
     const emp = item.employee || item;
     if (!emp) return;
@@ -330,6 +335,13 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     else if (empTypeStr.includes('KONTRAK') || empTypeStr.includes('PKWT')) byEmploymentStandard.pkwt++;
     else if (empTypeStr.includes('FREELANCE') || empTypeStr.includes('PART')) byEmploymentStandard.partTime++;
     else byEmploymentStandard.internship++;
+
+    // Akumulasi Data BPJS
+    const hasKes = Boolean(item.bpjsKesehatan ?? emp.bpjsKesehatan);
+    const hasKet = Boolean(item.bpjsKetenagakerjaan ?? emp.bpjsKetenagakerjaan);
+    if (hasKes && hasKet) bpjsRegisteredBoth++;
+    if (hasKes || hasKet) bpjsRegisteredEither++;
+    else bpjsUnregistered++;
   });
 
   const headcount = empList.length;
@@ -339,6 +351,15 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     level,
     count: byEmployeeLevel14[level] || 0
   }));
+
+  const bpjsSummary = {
+    total: headcount,
+    registeredBoth: bpjsRegisteredBoth,
+    registeredEither: bpjsRegisteredEither,
+    unregistered: bpjsUnregistered,
+    unregisteredPct: headcount > 0 ? Number(((bpjsUnregistered / headcount) * 100).toFixed(1)) : 0,
+    registeredPct: headcount > 0 ? Number(((bpjsRegisteredEither / headcount) * 100).toFixed(1)) : 0
+  };
 
   return {
     headcount,
@@ -352,6 +373,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     byEmployeeLevel,
     byEmployeeLevel14,
     byEmploymentStandard,
+    bpjs: bpjsSummary,
     byPositionGroup: {
       staff: {
         count: posGroupAcc.staff.count,

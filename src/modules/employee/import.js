@@ -183,11 +183,19 @@ const processExcelImport = async (filePath) => {
     });
   }
 
+  // Helper validasi status BPJS kebal kata negasi ("Belum Terdaftar", "Tidak Terdaftar", dsb)
+  const parseBpjsStatus = (val) => {
+    const clean = String(val || '').trim().toLowerCase();
+    if (!clean || clean === '-' || clean === 'null' || clean === 'undefined') return false;
+    if (clean.includes('belum') || clean.includes('tidak') || clean === 'false' || clean === '0' || clean === 'no') {
+      return false;
+    }
+    return clean.includes('terdaftar') || clean.includes('sudah') || clean === 'true' || clean === '1' || clean === 'ya';
+  };
+
   const formattedData = rawExcelData.map(row => {
-    const bpjsKesehatanString = String(getValue(row, 'bpjskesehatan') || '');
-    const bpjsKetenagakerjaanString = String(getValue(row, 'bpjsketenagakerjaan') || '');
-    const isBpjsKesehatanValid = bpjsKesehatanString.toLowerCase().includes('terdaftar');
-    const isBpjsKetenagakerjaanValid = bpjsKetenagakerjaanString.toLowerCase().includes('terdaftar');
+    const isBpjsKesehatanValid = parseBpjsStatus(getValue(row, 'bpjskesehatan'));
+    const isBpjsKetenagakerjaanValid = parseBpjsStatus(getValue(row, 'bpjsketenagakerjaan'));
 
     // Poin 1: Baca kolom Bulan, Tahun, atau Periode dari baris Excel
     const rawBulan = getValue(row, 'bulan') ?? getValue(row, 'month') ?? getValue(row, 'periode') ?? getValue(row, 'period');

@@ -126,9 +126,26 @@ const processBulkImport = async (rawData) => {
 
   for (const row of rawData) {
     try {
-      // 1. Validasi NIK: Blokir baris null dan baris angka sampah (seperti '1' di bawah sheet Toko)
-      let empNo = String(row.employeeNo || '').trim().toUpperCase();
-      if (!empNo || !/^[A-Z]/.test(empNo)) continue;
+      // 1. Validasi NIK: Bersihkan petik Excel ('A1516...) dan spasi
+      let empNo = String(row.employeeNo || '').trim().replace(/^['"`\s]+/, '').toUpperCase();
+
+      // Lewati baris kosong total atau baris ringkasan/footer Excel (seperti 'TOTAL', '1', 'SUM')
+      if (!empNo || empNo === 'TOTAL' || empNo === '1' || empNo === 'SUM') {
+        if (row.fullName && row.fullName !== 'TIDAK ADA NAMA' && row.fullName !== 'TOTAL') {
+          results.gagal++;
+          results.errorList.push(`Baris ${row.rowNumber || 'Data'} (Nama: ${row.fullName}): NIK kosong atau format NIK tidak valid`);
+        }
+        continue;
+      }
+
+      // Validasi NIK: Izinkan format NIK huruf maupun angka (minimal 3 karakter)
+      if (empNo.length < 3) {
+        if (row.fullName && row.fullName !== 'TIDAK ADA NAMA') {
+          results.gagal++;
+          results.errorList.push(`Baris ${row.rowNumber || 'Data'} (Nama: ${row.fullName}): NIK "${empNo}" terlalu pendek / tidak valid`);
+        }
+        continue;
+      }
 
       const divName = normalizeText(row.divisionName);
       const deptName = normalizeText(row.departmentName);
