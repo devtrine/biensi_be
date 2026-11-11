@@ -257,6 +257,8 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
   };
 
   // Akumulator BPJS
+  let bpjsRegisteredTK = 0;
+  let bpjsRegisteredKes = 0;
   let bpjsRegisteredBoth = 0;
   let bpjsRegisteredEither = 0;
   let bpjsUnregistered = 0;
@@ -337,8 +339,18 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     else byEmploymentStandard.internship++;
 
     // Akumulasi Data BPJS
-    const hasKes = Boolean(item.bpjsKesehatan ?? emp.bpjsKesehatan);
-    const hasKet = Boolean(item.bpjsKetenagakerjaan ?? emp.bpjsKetenagakerjaan);
+    const checkBpjs = (val) => {
+      if (typeof val === 'boolean') return val;
+      if (typeof val === 'string') {
+        const s = val.toLowerCase().trim();
+        return s === 'true' || s === '1' || s.includes('terdaftar') || s.includes('sudah') || s === 'ya';
+      }
+      return Boolean(val);
+    };
+    const hasKes = checkBpjs(item.bpjsKesehatan ?? emp.bpjsKesehatan);
+    const hasKet = checkBpjs(item.bpjsKetenagakerjaan ?? emp.bpjsKetenagakerjaan);
+    if (hasKet) bpjsRegisteredTK++;
+    if (hasKes) bpjsRegisteredKes++;
     if (hasKes && hasKet) bpjsRegisteredBoth++;
     if (hasKes || hasKet) bpjsRegisteredEither++;
     else bpjsUnregistered++;
@@ -358,7 +370,27 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     registeredEither: bpjsRegisteredEither,
     unregistered: bpjsUnregistered,
     unregisteredPct: headcount > 0 ? Number(((bpjsUnregistered / headcount) * 100).toFixed(1)) : 0,
-    registeredPct: headcount > 0 ? Number(((bpjsRegisteredEither / headcount) * 100).toFixed(1)) : 0
+    registeredPct: headcount > 0 ? Number(((bpjsRegisteredEither / headcount) * 100).toFixed(1)) : 0,
+    ketenagakerjaan: {
+      registered: bpjsRegisteredTK,
+      unregistered: Math.max(0, headcount - bpjsRegisteredTK),
+      registeredPct: headcount > 0 ? Number(((bpjsRegisteredTK / headcount) * 100).toFixed(1)) : 0,
+      unregisteredPct: headcount > 0 ? Number((((headcount - bpjsRegisteredTK) / headcount) * 100).toFixed(1)) : 0,
+    },
+    kesehatan: {
+      registered: bpjsRegisteredKes,
+      unregistered: Math.max(0, headcount - bpjsRegisteredKes),
+      registeredPct: headcount > 0 ? Number(((bpjsRegisteredKes / headcount) * 100).toFixed(1)) : 0,
+      unregisteredPct: headcount > 0 ? Number((((headcount - bpjsRegisteredKes) / headcount) * 100).toFixed(1)) : 0,
+    },
+    registeredTK: bpjsRegisteredTK,
+    registeredKes: bpjsRegisteredKes,
+    registeredTKPct: headcount > 0 ? Number(((bpjsRegisteredTK / headcount) * 100).toFixed(1)) : 0,
+    registeredKesPct: headcount > 0 ? Number(((bpjsRegisteredKes / headcount) * 100).toFixed(1)) : 0,
+    unregisteredTK: Math.max(0, headcount - bpjsRegisteredTK),
+    unregisteredKes: Math.max(0, headcount - bpjsRegisteredKes),
+    unregisteredTKPct: headcount > 0 ? Number((((headcount - bpjsRegisteredTK) / headcount) * 100).toFixed(1)) : 0,
+    unregisteredKesPct: headcount > 0 ? Number((((headcount - bpjsRegisteredKes) / headcount) * 100).toFixed(1)) : 0,
   };
 
   return {
