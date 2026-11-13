@@ -55,15 +55,7 @@ const ensureUploadDir = (dir) => {
   try {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true, mode: 0o775 });
-    }
-    fs.chmodSync(dir, 0o775);
-
-    // Pastikan seluruh file/sub-item di dalamnya juga memiliki permission 775
-    const files = fs.readdirSync(dir);
-    for (const file of files) {
-      try {
-        fs.chmodSync(path.join(dir, file), 0o775);
-      } catch (_) {}
+      try { fs.chmodSync(dir, 0o775); } catch (_) {}
     }
   } catch (err) {
     // Error diabaikan jika berjalan di OS non-POSIX seperti Windows dev environment
