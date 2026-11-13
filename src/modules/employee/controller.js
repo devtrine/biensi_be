@@ -42,7 +42,7 @@ const importEmployees = async (req, res) => {
       return res.status(400).json({ success: false, message: "File Excel tidak ditemukan" });
     }
 
-    const result = await importService.processExcelImport(req.file.path);
+    const result = await importService.processExcelImport(req.file.path, req.file.originalname);
 
     res.status(200).json({
       success: true,
