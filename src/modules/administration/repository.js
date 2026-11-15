@@ -24,7 +24,7 @@ const buildDefaultPermissions = (preset) => {
 
   if (preset === 'SUPER_ADMIN') {
     Object.keys(baseModules).forEach(k => Object.assign(baseModules[k], full));
-    return { description: 'Akses mutlak ke semua fitur', modules: baseModules };
+    return { description: 'Akses mutlak ke semua fitur', accessLevel: 'READ_WRITE', modules: baseModules };
   }
 
   if (preset === 'HR_MANAGER') {
@@ -32,7 +32,7 @@ const buildDefaultPermissions = (preset) => {
     Object.keys(baseModules).forEach(k => Object.assign(baseModules[k], full));
     baseModules.users = { label: 'Manajemen Akun Pengguna', view: true, create: false, edit: true, delete: false, export: true };
     baseModules.roles = { label: 'Role & Matriks Hak Akses', view: true, create: false, edit: false, delete: false, export: false };
-    return { description: 'Akses penuh operasional, tanpa pembuatan akun', modules: baseModules };
+    return { description: 'Akses penuh operasional, tanpa pembuatan akun', accessLevel: 'RESTRICTED_READ', modules: baseModules };
   }
 
   if (preset === 'HR_STAFF') {
@@ -46,7 +46,7 @@ const buildDefaultPermissions = (preset) => {
         Object.assign(baseModules[k], { view: true, create: true, edit: true, delete: false, export: true });
       }
     });
-    return { description: 'Akses input dan ubah data operasional harian', modules: baseModules };
+    return { description: 'Akses input dan ubah data operasional harian', accessLevel: 'RESTRICTED_READ', modules: baseModules };
   }
 
   // DEFAULT (Role 4 / VIEWER)
@@ -59,10 +59,60 @@ const buildDefaultPermissions = (preset) => {
     }
   });
 
-  return { description: 'Akses baca terbatas pada data non-sensitif', modules: baseModules };
+  return { description: 'Akses baca terbatas pada data non-sensitif', accessLevel: 'RESTRICTED_READ', modules: baseModules };
+};
+
+// Gabungkan role legacy 'SUPER_ADMIN' (dari seed lama) ke 'Super Admin' agar tidak duplikat
+const reconcileLegacySuperAdminRole = async () => {
+  const [legacyRole, canonicalRole] = await Promise.all([
+    prisma.role.findUnique({ where: { name: 'SUPER_ADMIN' } }),
+    prisma.role.findUnique({ where: { name: 'Super Admin' } })
+  ]);
+
+  if (!legacyRole) return;
+
+  const defaultSuperAdminPerm = buildDefaultPermissions('SUPER_ADMIN');
+  const legacyPerm = legacyRole.permissions && typeof legacyRole.permissions === 'object' ? legacyRole.permissions : {};
+
+  if (!canonicalRole) {
+    const nextPermissions = legacyPerm.modules
+      ? { accessLevel: 'READ_WRITE', ...legacyPerm }
+      : defaultSuperAdminPerm;
+
+    await prisma.role.update({
+      where: { id: legacyRole.id },
+      data: { name: 'Super Admin', permissions: nextPermissions }
+    });
+    return;
+  }
+
+  // Pertahankan ID yang lebih kecil (umumnya ID 1) agar token/user yang sudah terikat tidak putus
+  const [keepRole, dropRole] =
+    legacyRole.id <= canonicalRole.id ? [legacyRole, canonicalRole] : [canonicalRole, legacyRole];
+
+  const canonicalPerm = canonicalRole.permissions && typeof canonicalRole.permissions === 'object' ? canonicalRole.permissions : {};
+  const mergedPermissions = legacyPerm.modules
+    ? { accessLevel: 'READ_WRITE', ...legacyPerm }
+    : canonicalPerm.modules
+      ? { accessLevel: 'READ_WRITE', ...canonicalPerm }
+      : defaultSuperAdminPerm;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.user.updateMany({
+      where: { roleId: dropRole.id },
+      data: { roleId: keepRole.id }
+    });
+    await tx.role.delete({ where: { id: dropRole.id } });
+    await tx.role.update({
+      where: { id: keepRole.id },
+      data: { name: 'Super Admin', permissions: mergedPermissions }
+    });
+  });
 };
 
 const ensureDefaultRoles = async () => {
+  await reconcileLegacySuperAdminRole();
+
   const defaultRoles = [
     { name: 'Super Admin', permissions: buildDefaultPermissions('SUPER_ADMIN') },
     { name: 'Manajer HR', permissions: buildDefaultPermissions('HR_MANAGER') },
@@ -151,6 +201,8 @@ const updateRole = async (id, data) => {
 };
 
 module.exports = {
+  buildDefaultPermissions,
+  ensureDefaultRoles,
   createUser,
   findUserById,
   findUserByEmail,
