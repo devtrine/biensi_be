@@ -3,7 +3,6 @@ const service = require('./service');
 const createUser = async (req, res) => {
   try {
     const { name, email, password, roleId, phoneNumber, isActive } = req.body;
-    const creatorRoleId = req.user.roleId;
 
     if (!name || !email || !password || !roleId) {
       return res.status(400).json({
@@ -12,22 +11,17 @@ const createUser = async (req, res) => {
       });
     }
 
-    // HIERARKI MUTLAK: Hanya Super Admin (roleId === 1) yang boleh membuat akun Super Admin baru
-    if (creatorRoleId !== 1 && parseInt(roleId, 10) === 1) {
-      return res.status(403).json({
-        success: false,
-        message: 'Pelanggaran Hierarki: Anda tidak diizinkan membuat akun dengan level Super Admin.'
-      });
-    }
-
-    const result = await service.createNewUser({
-      name,
-      email,
-      password,
-      roleId: parseInt(roleId, 10),
-      phoneNumber,
-      isActive
-    });
+    const result = await service.createNewUser(
+      {
+        name,
+        email,
+        password,
+        roleId: parseInt(roleId, 10),
+        phoneNumber,
+        isActive
+      },
+      req.user
+    );
 
     res.status(201).json({
       success: true,
@@ -35,7 +29,7 @@ const createUser = async (req, res) => {
       message: 'Pengguna berhasil ditambahkan'
     });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    res.status(error.statusCode || 400).json({ success: false, message: error.message });
   }
 };
 
@@ -43,24 +37,19 @@ const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, email, password, roleId, phoneNumber, isActive } = req.body;
-    const editorRoleId = req.user.roleId;
 
-    // Cegah non-Super Admin mengubah role seseorang menjadi Super Admin
-    if (roleId !== undefined && editorRoleId !== 1 && parseInt(roleId, 10) === 1) {
-      return res.status(403).json({
-        success: false,
-        message: 'Pelanggaran Hierarki: Anda tidak diizinkan memberikan hak akses Super Admin.'
-      });
-    }
-
-    const result = await service.updateUserByAdmin(id, {
-      name,
-      email,
-      password,
-      roleId,
-      phoneNumber,
-      isActive
-    });
+    const result = await service.updateUserByAdmin(
+      id,
+      {
+        name,
+        email,
+        password,
+        roleId,
+        phoneNumber,
+        isActive
+      },
+      req.user
+    );
 
     res.status(200).json({
       success: true,
@@ -68,7 +57,7 @@ const updateUser = async (req, res) => {
       message: 'Data pengguna berhasil diperbarui'
     });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    res.status(error.statusCode || 400).json({ success: false, message: error.message });
   }
 };
 

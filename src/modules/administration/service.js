@@ -1,7 +1,30 @@
 const repository = require('./repository');
 const bcrypt = require('bcrypt');
+const { isSuperAdminRole } = require('../../middleware/auth');
 
-const createNewUser = async (userData) => {
+const ensureCanAssignRole = async (roleId, requester, errorMessage) => {
+  if (roleId === undefined || roleId === null || roleId === '') return;
+  const parsedRoleId = parseInt(roleId, 10);
+  if (Number.isNaN(parsedRoleId)) return;
+
+  const targetRole = await repository.findRoleById(parsedRoleId);
+  const targetIsSuperAdmin = isSuperAdminRole(parsedRoleId, targetRole?.name);
+  const requesterIsSuperAdmin = isSuperAdminRole(requester?.roleId, requester?.roleName);
+
+  if (targetIsSuperAdmin && !requesterIsSuperAdmin) {
+    const err = new Error(errorMessage);
+    err.statusCode = 403;
+    throw err;
+  }
+};
+
+const createNewUser = async (userData, requester) => {
+  await ensureCanAssignRole(
+    userData.roleId,
+    requester,
+    'Pelanggaran Hierarki: Anda tidak diizinkan membuat akun dengan level Super Admin.'
+  );
+
   const existingEmail = await repository.findUserByEmail(userData.email);
   if (existingEmail) {
     throw new Error('Email sudah terdaftar pada akun lain.');
@@ -86,9 +109,15 @@ const getAllUsersList = async () => {
   }));
 };
 
-const updateUserByAdmin = async (targetUserId, updateData) => {
+const updateUserByAdmin = async (targetUserId, updateData, requester) => {
   const existing = await repository.findUserById(targetUserId);
   if (!existing) throw new Error('Pengguna tidak ditemukan');
+
+  await ensureCanAssignRole(
+    updateData.roleId,
+    requester,
+    'Pelanggaran Hierarki: Anda tidak diizinkan memberikan hak akses Super Admin.'
+  );
 
   const payload = {};
   if (updateData.name !== undefined) payload.name = updateData.name;

@@ -1,4 +1,5 @@
 const service = require('./service');
+const { isSuperAdminRole } = require('../../middleware/auth');
 
 // hak akses via controller karena di kompres jadi 1 endpoint
 const REDACTION_MAP = {
@@ -90,13 +91,11 @@ const getSummary = async (req, res) => {
     const data = await service.getMainExecutiveDashboard(filters);
 
     // 2. Identifikasi Role & Permissions dari req.user (hasil middleware auth)
-    const userRole = req.user?.roleId;
-    const roleName = String(req.user?.roleName || '').toUpperCase();
     const permissions = req.user?.permissions || {};
     const modulesPerm = permissions.modules || permissions;
     const accessLevel = String(permissions.accessLevel || 'RESTRICTED_READ').toUpperCase();
 
-    const isSuperAdmin = userRole === 1 || roleName === 'SUPER ADMIN';
+    const isSuperAdmin = isSuperAdminRole(req.user?.roleId, req.user?.roleName);
 
     // 3. Jalankan Redaction Map secara dinamis
     if (!isSuperAdmin) {

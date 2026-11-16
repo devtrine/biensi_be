@@ -47,12 +47,15 @@ const authenticate = async (req, res, next) => { // <-- Ubah jadi async
   }
 };
 
+const isSuperAdminRole = (roleId, roleName) => {
+  const normalized = String(roleName || '').trim().toUpperCase();
+  return Number(roleId) === 1 || normalized === 'SUPER ADMIN' || normalized === 'SUPER_ADMIN';
+};
+
 const checkPermission = (moduleName, action) => {
   return (req, res, next) => {
-    // 1. Super Admin Bebas Hambatan (ID 1 atau 2)
-    const userRole = req.user.roleId;
-    const roleName = String(req.user.roleName || '').toUpperCase();
-    if (userRole === 1 || userRole === 2 || roleName === 'SUPER ADMIN') {
+    // 1. Super Admin Bebas Hambatan
+    if (isSuperAdminRole(req.user?.roleId, req.user?.roleName)) {
       return next();
     }
 
@@ -85,4 +88,4 @@ const checkPermission = (moduleName, action) => {
   };
 };
 
-module.exports = { authenticate, checkPermission };
+module.exports = { authenticate, checkPermission, isSuperAdminRole };
