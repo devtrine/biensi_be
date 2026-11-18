@@ -36,6 +36,10 @@ const getPeriodById = async (periodId) => {
 // Ambil Snapshot Karyawan
 const getMonthlySnapshots = async (periodId, year) => {
   const includeRel = {
+    division: true,
+    department: true,
+    position: true,
+    store: true,
     employee: {
       include: {
         division: true,

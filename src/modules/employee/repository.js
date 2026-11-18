@@ -268,12 +268,15 @@ const processBulkImport = async (rawData) => {
       let validJoinDate = row.joinDate ? new Date(row.joinDate) : new Date();
       if (validJoinDate && isNaN(validJoinDate.getTime())) validJoinDate = new Date();
 
+      const normalizedGender = normalizeGender(row.gender);
+      const normalizedEducation = normalizeText(row.educationLevel);
+
       const basePayload = {
         employeeNo: empNo,
         fullName: fullName,
-        gender: normalizeGender(row.gender),
+        gender: normalizedGender,
         birthDate: validBirthDate,
-        educationLevel: normalizeText(row.educationLevel),
+        educationLevel: normalizedEducation,
         employmentType: empType,
         joinDate: validJoinDate,
         endDate: validEndDate,
@@ -281,6 +284,14 @@ const processBulkImport = async (rawData) => {
         bpjsKetenagakerjaan: Boolean(row.bpjsKetenagakerjaan),
         bpjsKesehatan: Boolean(row.bpjsKesehatan),
         baseSalary: parsedSalary
+      };
+
+      const updatePayload = {
+        ...basePayload,
+        // Jangan timpa gender/tanggal lahir/pendidikan menjadi null jika baris periode lain tidak mengisinya
+        ...(normalizedGender ? {} : { gender: undefined }),
+        ...(validBirthDate ? {} : { birthDate: undefined }),
+        ...(normalizedEducation ? {} : { educationLevel: undefined })
       };
 
       // 6. Eksekusi Upsert (Pastikan relasi bisa di-disconnect jika karyawan HO tidak punya storeId)
@@ -295,7 +306,7 @@ const processBulkImport = async (rawData) => {
           ...(storeId ? { store: { connect: { id: storeId } } } : {})
         },
         update: {
-          ...basePayload,
+          ...updatePayload,
           division: divisionId ? { connect: { id: divisionId } } : { disconnect: true },
           department: departmentId ? { connect: { id: departmentId } } : { disconnect: true },
           unit: unitId ? { connect: { id: unitId } } : { disconnect: true },
@@ -303,6 +314,23 @@ const processBulkImport = async (rawData) => {
           store: storeId ? { connect: { id: storeId } } : { disconnect: true }
         }
       });
+
+      // Simpan atribut resolusi milik baris periode ini agar snapshot historis tidak tertimpa periode lain
+      row._resolved = {
+        employeeNo: empNo,
+        divisionId,
+        departmentId,
+        positionId,
+        storeId,
+        employeeLevel: levelName,
+        employmentType: empType,
+        birthDate: validBirthDate,
+        joinDate: validJoinDate,
+        endDate: validEndDate,
+        baseSalary: parsedSalary,
+        bpjsKetenagakerjaan: Boolean(row.bpjsKetenagakerjaan),
+        bpjsKesehatan: Boolean(row.bpjsKesehatan)
+      };
 
       results.sukses++;
     } catch (error) {
