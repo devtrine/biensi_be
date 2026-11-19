@@ -11,7 +11,7 @@ const importCompliance = async (req, res) => {
     
     res.status(200).json({
       success: true,
-      message: `Import Kepatuhan Selesai! Berhasil memproses data dari ${result.successCount} toko.`,
+      message: `Import Kepatuhan Selesai! Sukses: ${result.successCount}, Gagal: ${result.failCount}`,
       errors: result.errors
     });
   } catch (error) {

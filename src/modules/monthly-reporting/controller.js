@@ -232,13 +232,28 @@ const uploadAttendanceUniversal = async (req, res) => {
     }
 
     let totalImported = 0;
+    const errorList = [];
     for (const sheetName of targetSheets) {
-      const raw2DArray = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-      const data = await service.importAttendanceUniversal(raw2DArray);
-      totalImported += (data.imported || 0);
+      try {
+        const raw2DArray = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+        const data = await service.importAttendanceUniversal(raw2DArray);
+        totalImported += (data.imported || 0);
+      } catch (sheetErr) {
+        errorList.push(`Sheet '${sheetName}': ${sheetErr.message}`);
+      }
     }
 
-    res.status(201).json({ success: true, message: `Berhasil memproses ${totalImported} data absensi!` });
+    if (totalImported === 0 && errorList.length === 0) {
+      errorList.push('Tidak ada data absensi valid yang ditemukan pada sheet yang diproses.');
+    }
+
+    res.status(201).json({
+      success: totalImported > 0 || errorList.length === 0,
+      message: errorList.length > 0
+        ? `Import Absensi Selesai! Sukses: ${totalImported}, Gagal: ${errorList.length}`
+        : `Berhasil memproses ${totalImported} data absensi!`,
+      errors: errorList
+    });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   } finally {
