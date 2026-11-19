@@ -5,7 +5,17 @@ info:
 
 http:
   method: GET
-  url: http://localhost:5000/api/v1/dashboard/summary
+  url: http://localhost:5000/api/v1/dashboard/summary?year=2025&month=2&scope=Corporate
+  params:
+    - name: year
+      value: "2025"
+      type: query
+    - name: month
+      value: "2"
+      type: query
+    - name: scope
+      value: Corporate
+      type: query
   auth: inherit
 
 settings:

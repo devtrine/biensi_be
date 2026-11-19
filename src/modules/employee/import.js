@@ -2,7 +2,7 @@ const xlsx = require('xlsx');
 const repository = require('./repository');
 const prisma = require('../../config/database');
 
-// Ubah serial Excel ke Tanggal 
+// Ubah serial Excel ke Tanggal
 const excelDateToJSDate = (serial) => {
   if (!serial) return null;
   if (serial instanceof Date) return isNaN(serial.getTime()) ? null : serial;
@@ -54,11 +54,15 @@ const MONTH_MAP = {
   des: 12, desember: 12, dec: 12, december: 12
 };
 
-// Helper: Normalisasi nama toko (mencegah teks '-' atau 'HO' atau 'TOTAL' didaftarkan sebagai nama Store)
+// [FIX] Helper: Normalisasi nama toko (tangkap juga variasi "HO BANDUNG", "HEAD OFFICE ...", dll.)
 const cleanStore = (val) => {
   if (!val) return null;
   const s = String(val).trim().toUpperCase();
-  if (['-', 'TOTAL', 'HO', 'PUSAT', 'KANTOR PUSAT', 'HEAD OFFICE', 'N/A', 'NA', '0', 'NONE', 'SEMUA', 'NULL'].includes(s)) {
+  const exactIgnore = ['-', 'TOTAL', 'HO', 'PUSAT', 'KANTOR PUSAT', 'HEAD OFFICE', 'N/A', 'NA', '0', 'NONE', 'SEMUA', 'NULL'];
+  if (exactIgnore.includes(s)) {
+    return null;
+  }
+  if (s.startsWith('HO ') || s.startsWith('HO-') || s.includes('HEAD OFFICE') || s.includes('KANTOR PUSAT')) {
     return null;
   }
   return String(val).trim();
@@ -112,22 +116,22 @@ const parseMonthYearValue = (rawMonth, rawYear, fallback) => {
   let month = null;
   let year = null;
 
-  // 1. Dukungan format Date Object
-  if (rawMonth instanceof Date && !isNaN(rawMonth.getTime())) {
+  // 1. Dukungan format Date Object (pastikan tahun valid >= 2020)
+  if (rawMonth instanceof Date && !isNaN(rawMonth.getTime()) && rawMonth.getFullYear() >= 2020) {
     return { year: rawMonth.getFullYear(), month: rawMonth.getMonth() + 1 };
   }
-  if (rawYear instanceof Date && !isNaN(rawYear.getTime())) {
+  if (rawYear instanceof Date && !isNaN(rawYear.getTime()) && rawYear.getFullYear() >= 2020) {
     return { year: rawYear.getFullYear(), month: rawYear.getMonth() + 1 };
   }
 
   // 2. Dukungan format Excel Serial Date (misal 45566 -> tahun ~2024; hindari angka tahun seperti 2024/2025/2026)
   if (typeof rawMonth === 'number' && rawMonth >= 30000 && rawMonth <= 100000) {
     const d = excelDateToJSDate(rawMonth);
-    if (d) return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
+    if (d && d.getUTCFullYear() >= 2020) return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
   }
   if (typeof rawYear === 'number' && rawYear >= 30000 && rawYear <= 100000) {
     const d = excelDateToJSDate(rawYear);
-    if (d) return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
+    if (d && d.getUTCFullYear() >= 2020) return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
   }
 
   // 3. Cek Tahun
@@ -178,8 +182,11 @@ const parseMonthYearValue = (rawMonth, rawYear, fallback) => {
     }
   }
 
+  // [FIX] Proteksi rentang tahun wajar agar tidak pernah jatuh ke tahun 1905/2004
+  const safeYear = (year && year >= 2020 && year <= 2100) ? year : currentFallback.year;
+
   return {
-    year: year || currentFallback.year,
+    year: safeYear,
     month: month || currentFallback.month
   };
 };
@@ -333,10 +340,11 @@ const processExcelImport = async (filePath, originalFilename = '') => {
 const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
   const warnings = [];
   try {
-    // 1. Kumpulkan semua periode unik (Tahun & Bulan) yang ada di baris file Excel yang di-upload
+    // 1. Kumpulkan semua periode unik (Tahun & Bulan) yang valid (tahun >= 2020)
     const periodMap = new Map();
     for (const row of formattedData) {
-      if (row.periodYear && row.periodMonth) {
+      // [FIX] Cegah pembuatan reportingPeriod dengan tahun tidak wajar
+      if (row.periodYear && row.periodYear >= 2020 && row.periodYear <= 2100 && row.periodMonth) {
         const key = `${row.periodYear}-${row.periodMonth}`;
         periodMap.set(key, { year: row.periodYear, month: row.periodMonth });
       }

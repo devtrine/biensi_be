@@ -1069,8 +1069,12 @@ const getMainExecutiveDashboard = async (filters = {}) => {
     annualTurnoverRate: annualTurnoverRate
   };
 
+  // [FIX] Batasi tahun >= 2020 agar periode anomali (seperti 1905 atau 2004) tidak masuk ke grafik
   const trajectoryPeriods = await prisma.reportingPeriod.findMany({
-    where: { month: month },
+    where: {
+      month: month,
+      year: { gte: 2020 }
+    },
     orderBy: { year: 'asc' }
   });
 
@@ -1082,7 +1086,7 @@ const getMainExecutiveDashboard = async (filters = {}) => {
       storeId: true,
       employee: {
         select: {
-          gender: true,
+          id: true,
           storeId: true
         }
       }
@@ -1091,9 +1095,12 @@ const getMainExecutiveDashboard = async (filters = {}) => {
 
   const periodSnapMap = {};
   trajectorySnapshots.forEach(s => {
-    if (!s.employee || s.employee.gender === null) return;
+    // [FIX] Hapus filter s.employee.gender === null agar total grafik sinkron 100% dengan kartu KPI
+    if (!s.employee) return;
     if (!periodSnapMap[s.periodId]) periodSnapMap[s.periodId] = { store: 0, hq: 0, total: 0 };
-    const hasStore = s.storeId !== undefined ? s.storeId !== null : Boolean(s.employee?.storeId);
+
+    // [FIX] Evaluasi langsung dari storeId snapshot (null = HO, non-null = Store)
+    const hasStore = s.storeId !== null;
     if (hasStore) periodSnapMap[s.periodId].store++;
     else periodSnapMap[s.periodId].hq++;
     periodSnapMap[s.periodId].total++;
