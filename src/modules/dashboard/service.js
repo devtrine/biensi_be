@@ -49,79 +49,58 @@ const LEVEL_TO_GROUP = {
   'Sales Advisor': 'staff'
 };
 
+const EXACT_LEVEL_MAP = {
+  'CEO': 'Direktur/CEO',
+  'CMO': 'Direktur/CEO',
+  'BOD': 'Direktur/CEO',
+  'DIREKTUR': 'Direktur/CEO',
+  'DIRECTOR': 'Direktur/CEO',
+  'DIREKTUR/CEO': 'Direktur/CEO',
+  'GM': 'GM/VP',
+  'VP': 'GM/VP',
+  'SVP': 'GM/VP',
+  'EVP': 'GM/VP',
+  'AVP': 'GM/VP',
+  'GM/VP': 'GM/VP',
+  'MGR': 'Manager',
+  'MANAGER': 'Manager',
+  'ASMAN': 'Asst Man',
+  'ASMEN': 'Asst Man',
+  'ASST MAN': 'Asst Man',
+  'ASST. MAN': 'Asst Man',
+  'ASST MANAGER': 'Asst Man',
+  'HEAD': 'Head',
+  'ASHEAD': 'Asst Head',
+  'ASST HEAD': 'Asst Head',
+  'LEADER': 'Leader',
+  'STAFF': 'Staff',
+  'OPR': 'Operator',
+  'OPERATOR': 'Operator',
+  'PERBANTUAN': 'Operator',
+  'BORONGAN': 'Operator',
+  'STORE LEADER': 'Store Leader',
+  'ASST STORE LEADER': 'Asst Store Leader',
+  'ASST SL': 'Asst Store Leader',
+  'KASIR': 'Kasir',
+  'CASHIER': 'Kasir',
+  'VM STORE': 'Vm Store',
+  'VM': 'Vm Store',
+  'SALES ADVISOR': 'Sales Advisor',
+  'SA': 'Sales Advisor'
+};
+
 const classifyEmployeeLevel = (emp, item = null) => {
   if (!emp) return 'Staff';
-  const isStore = Boolean(emp.storeId || emp.store || (item && item.storeId));
-  const levelStr = String(emp.position?.employeeLevel || '').trim().toUpperCase();
-  const nameStr = String(emp.position?.name || '').trim().toUpperCase();
+  const isStore = Boolean(
+    item && item.storeId !== undefined
+      ? item.storeId !== null
+      : (emp.storeId || emp.store)
+  );
+  const levelStr = String(item?.employeeLevel || emp.position?.employeeLevel || '').trim().toUpperCase();
+  const nameStr = String(item?.position?.name || emp.position?.name || '').trim().toUpperCase();
   const titleStr = String(emp.jobTitle || '').trim().toUpperCase();
-  const deptStr = String(emp.department?.name || '').trim().toUpperCase();
+  const deptStr = String(item?.department?.name || emp.department?.name || '').trim().toUpperCase();
   const comb = `${levelStr} ${nameStr} ${titleStr}`;
-
-  const isCreativeOrArtDirector = comb.includes('CREATIVE DIRECTOR') || comb.includes('ART DIRECTOR') || comb.includes('DIRECTOR OF PHOTOGRAPHY');
-
-  // Deteksi General Manager atau Vice President (GM/VP)
-  const isVP = (
-    comb.includes('VICE PRESIDENT') ||
-    comb.includes('VICE-PRESIDENT') ||
-    comb.includes('VICE PRES') ||
-    /\b(VP|SVP|EVP|AVP)\b/.test(comb)
-  );
-
-  const isGM = (
-    comb.includes('GENERAL MANAGER') ||
-    comb.includes('GEN MGR') ||
-    comb.includes('GEN. MGR') ||
-    /\bGM\b/.test(comb) ||
-    deptStr.startsWith('GM ')
-  );
-
-  // GM atau VP diprioritaskan lebih dulu agar tidak tertelan ke Direktur/CEO (misal karena kata 'PRESIDENT' di 'VICE PRESIDENT')
-  if (isVP || isGM) {
-    return 'GM/VP';
-  }
-
-  // Deteksi Direktur / CEO / BOD / Dewan Komisaris
-  if (
-    !isCreativeOrArtDirector && (
-      comb.includes('DIREKTUR') ||
-      comb.includes('PRESIDENT DIRECTOR') ||
-      comb.includes('MANAGING DIRECTOR') ||
-      comb.includes('EXECUTIVE DIRECTOR') ||
-      /\bDIRECTOR\b/.test(comb) ||
-      /\bBOD\b/.test(comb) ||
-      /\bCEO\b/.test(comb) ||
-      comb.includes('CHIEF EXECUTIVE') ||
-      /\bPRESIDENT\b/.test(comb) ||
-      comb.includes('KOMISARIS') ||
-      comb.includes('COMMISSIONER') ||
-      comb.includes('COMMISIONER')
-    )
-  ) {
-    return 'Direktur/CEO';
-  }
-
-  if (
-    comb.includes('ASST MAN') ||
-    comb.includes('ASST. MAN') ||
-    comb.includes('ASSISTANT MAN') ||
-    comb.includes('ASSOCIATE MAN') ||
-    comb.includes('DEPUTY MAN')
-  ) {
-    return 'Asst Man';
-  }
-
-  if (comb.includes('MAN') && (comb.includes('MANAGER') || levelStr === 'MGR' || levelStr === 'MANAGER')) {
-    return 'Manager';
-  }
-
-  if (comb.includes('ASST HEAD') || comb.includes('ASSISTANT HEAD') || comb.includes('DEPUTY HEAD') || levelStr === 'ASHEAD') {
-    return 'Asst Head';
-  }
-
-  if (comb.includes('HEAD') || levelStr === 'HEAD' || comb.includes('KEPALA DEPT') || comb.includes('KEPALA DIVISI') || isCreativeOrArtDirector) {
-    return 'Head';
-  }
 
   // Level khusus toko (Store / Retail Network) - Hanya berlaku untuk karyawan yang bertugas di Store
   if (isStore) {
@@ -168,6 +147,78 @@ const classifyEmployeeLevel = (emp, item = null) => {
     }
   }
 
+  // Prioritaskan Level Jabatan eksplisit agar kata di nama jabatan (misal "MANAGER OF BRAND MOUTLEY" dg level HEAD) tidak salah klasifikasi
+  if (levelStr && EXACT_LEVEL_MAP[levelStr]) {
+    return EXACT_LEVEL_MAP[levelStr];
+  }
+
+  const isCreativeOrArtDirector = comb.includes('CREATIVE DIRECTOR') || comb.includes('ART DIRECTOR') || comb.includes('DIRECTOR OF PHOTOGRAPHY');
+
+  // Deteksi General Manager atau Vice President (GM/VP)
+  const isVP = (
+    comb.includes('VICE PRESIDENT') ||
+    comb.includes('VICE-PRESIDENT') ||
+    comb.includes('VICE PRES') ||
+    /\b(VP|SVP|EVP|AVP)\b/.test(comb)
+  );
+
+  const isGM = (
+    comb.includes('GENERAL MANAGER') ||
+    comb.includes('GEN MGR') ||
+    comb.includes('GEN. MGR') ||
+    /\bGM\b/.test(comb) ||
+    deptStr.startsWith('GM ')
+  );
+
+  // GM atau VP diprioritaskan lebih dulu agar tidak tertelan ke Direktur/CEO (misal karena kata 'PRESIDENT' di 'VICE PRESIDENT')
+  if (isVP || isGM) {
+    return 'GM/VP';
+  }
+
+  // Deteksi Direktur / CEO / CMO / BOD / Dewan Komisaris
+  if (
+    !isCreativeOrArtDirector && (
+      comb.includes('DIREKTUR') ||
+      comb.includes('PRESIDENT DIRECTOR') ||
+      comb.includes('MANAGING DIRECTOR') ||
+      comb.includes('EXECUTIVE DIRECTOR') ||
+      /\bDIRECTOR\b/.test(comb) ||
+      /\bBOD\b/.test(comb) ||
+      /\bCEO\b/.test(comb) ||
+      /\bCMO\b/.test(comb) ||
+      comb.includes('CHIEF EXECUTIVE') ||
+      /\bPRESIDENT\b/.test(comb) ||
+      comb.includes('KOMISARIS') ||
+      comb.includes('COMMISSIONER') ||
+      comb.includes('COMMISIONER')
+    )
+  ) {
+    return 'Direktur/CEO';
+  }
+
+  if (
+    comb.includes('ASST MAN') ||
+    comb.includes('ASST. MAN') ||
+    comb.includes('ASSISTANT MAN') ||
+    comb.includes('ASSOCIATE MAN') ||
+    comb.includes('DEPUTY MAN') ||
+    /\b(ASMAN|ASMEN)\b/.test(comb)
+  ) {
+    return 'Asst Man';
+  }
+
+  if (comb.includes('ASST HEAD') || comb.includes('ASSISTANT HEAD') || comb.includes('DEPUTY HEAD') || levelStr === 'ASHEAD') {
+    return 'Asst Head';
+  }
+
+  if (comb.includes('HEAD') || levelStr === 'HEAD' || comb.includes('KEPALA DEPT') || comb.includes('KEPALA DIVISI') || isCreativeOrArtDirector) {
+    return 'Head';
+  }
+
+  if (comb.includes('MAN') && (comb.includes('MANAGER') || levelStr === 'MGR' || levelStr === 'MANAGER')) {
+    return 'Manager';
+  }
+
   if (
     comb.includes('LEADER') ||
     levelStr === 'LEADER' ||
@@ -181,6 +232,7 @@ const classifyEmployeeLevel = (emp, item = null) => {
   if (
     levelStr === 'OPR' ||
     levelStr === 'OPERATOR' ||
+    levelStr === 'PERBANTUAN' ||
     comb.includes('OPERATOR') ||
     comb.includes('DRIVER') ||
     comb.includes('WAREHOUSE') ||
@@ -332,7 +384,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     }
 
     // Klasifikasi Tipe Kontrak
-    const empTypeStr = String(emp.employmentType || '').toUpperCase();
+    const empTypeStr = String(item.employmentType || emp.employmentType || '').toUpperCase();
     if (empTypeStr.includes('TETAP') || empTypeStr.includes('PKWTT')) byEmploymentStandard.pkwtt++;
     else if (empTypeStr.includes('KONTRAK') || empTypeStr.includes('PKWT')) byEmploymentStandard.pkwt++;
     else if (empTypeStr.includes('FREELANCE') || empTypeStr.includes('PART')) byEmploymentStandard.partTime++;
@@ -447,22 +499,24 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
 
   const totalSales = sales.reduce((sum, s) => sum + parseFloat(s.netSales || 0), 0);
 
-  // Filter Snapshot sesuai Scope untuk Charts
+  // Filter Snapshot sesuai Scope untuk Charts (gunakan storeId snapshot agar data historis tidak bergeser karena mutasi periode lain)
   const normScope = String(scope || 'CORPORATE').toUpperCase();
+  const isStoreSnapshot = (s) => (s.storeId !== undefined ? s.storeId !== null : s.employee?.storeId !== null);
+
   const snapshots = rawSnapshots.filter(snap => {
     if (!snap.employee) return false;
     if (normScope.includes('HQ') || normScope.includes('PUSAT') || normScope === 'HO') {
-      return snap.employee.storeId === null;
+      return !isStoreSnapshot(snap);
     }
     if (normScope.includes('STORE') || normScope.includes('RITEL') || normScope.includes('TOKO')) {
-      return snap.employee.storeId !== null;
+      return isStoreSnapshot(snap);
     }
     return true;
   });
 
   // Untuk filter hq dan store
-  const hqSnapshots = rawSnapshots.filter(s => s.employee && s.employee.storeId === null);
-  const storeSnapshots = rawSnapshots.filter(s => s.employee && s.employee.storeId !== null);
+  const hqSnapshots = rawSnapshots.filter(s => s.employee && !isStoreSnapshot(s));
+  const storeSnapshots = rawSnapshots.filter(s => s.employee && isStoreSnapshot(s));
   const activeScopeStats = summarizeEmployeeGroup(snapshots, period.year, period.month, totalSales);
 
   const scopeBreakdown = {
@@ -517,10 +571,10 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
       }
     }
 
-    const divName = emp.division?.name || 'Uncategorized';
-    const deptName = emp.department?.name || 'Uncategorized';
+    const divName = snap.division?.name || emp.division?.name || 'Uncategorized';
+    const deptName = snap.department?.name || emp.department?.name || 'Uncategorized';
     const genderKey = isMaleGender(emp.gender) ? 'LAKI-LAKI' : 'PEREMPUAN';
-    const status = emp.employmentType || 'Unknown';
+    const status = snap.employmentType || emp.employmentType || 'Unknown';
 
     distribution.byDivision[divName] = (distribution.byDivision[divName] || 0) + 1;
     distribution.byDepartment[deptName] = (distribution.byDepartment[deptName] || 0) + 1;
@@ -552,7 +606,7 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
   const avgAge = validAgeCount ? (totalAge / validAgeCount).toFixed(1) : 0;
 
   const productionEmployees = snapshots.filter(s => {
-    const deptName = String(s.employee?.department?.name || '').toUpperCase().trim();
+    const deptName = String(s.department?.name || s.employee?.department?.name || '').toUpperCase().trim();
     return deptName === 'PRODUCTION' || deptName.includes('PRODUKSI');
   });
 
@@ -1025,8 +1079,10 @@ const getMainExecutiveDashboard = async (filters = {}) => {
     where: { periodId: { in: trajectoryPeriodIds } },
     select: {
       periodId: true,
+      storeId: true,
       employee: {
         select: {
+          gender: true,
           storeId: true
         }
       }
@@ -1035,8 +1091,10 @@ const getMainExecutiveDashboard = async (filters = {}) => {
 
   const periodSnapMap = {};
   trajectorySnapshots.forEach(s => {
+    if (!s.employee || s.employee.gender === null) return;
     if (!periodSnapMap[s.periodId]) periodSnapMap[s.periodId] = { store: 0, hq: 0, total: 0 };
-    if (s.employee?.storeId) periodSnapMap[s.periodId].store++;
+    const hasStore = s.storeId !== undefined ? s.storeId !== null : Boolean(s.employee?.storeId);
+    if (hasStore) periodSnapMap[s.periodId].store++;
     else periodSnapMap[s.periodId].hq++;
     periodSnapMap[s.periodId].total++;
   });

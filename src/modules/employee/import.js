@@ -308,8 +308,14 @@ const processExcelImport = async (filePath, originalFilename = '') => {
     };
   }
 
+  // Urutkan kronologis agar tabel master Employee selalu mencerminkan periode terbaru,
+  // sementara setiap baris tetap menyimpan atribut historisnya masing-masing di row._resolved
+  const chronologicalRows = [...formattedData].sort(
+    (a, b) => (a.periodYear - b.periodYear) || (a.periodMonth - b.periodMonth)
+  );
+
   // Lempar data ke Repository untuk upsert Master Employee
-  const importResult = await repository.processBulkImport(formattedData);
+  const importResult = await repository.processBulkImport(chronologicalRows);
 
   // Auto-generate & timpa reporting periods & snapshots sesuai Bulan & Tahun di Excel secara aman terisolasi
   await syncSnapshotsAfterEmployeeImport(formattedData);
@@ -334,8 +340,10 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
     }
 
     // 2. Kumpulkan semua NIK yang ada di file Excel dan ambil data employee dari database
-    const empNos = Array.from(new Set(formattedData.map(r => String(r.employeeNo || '').trim().toUpperCase())));
-    const empNosWithStr = empNos.map(no => `${no}-STR`);
+    const empNos = Array.from(new Set(
+      formattedData.map(r => String(r._resolved?.employeeNo || r.employeeNo || '').trim().replace(/^['"`\s]+/, '').toUpperCase())
+    )).filter(Boolean);
+    const empNosWithStr = empNos.map(no => no.endsWith('-STR') ? no : `${no}-STR`);
 
     const matchingEmployees = await prisma.employee.findMany({
       where: {
@@ -373,35 +381,41 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
       const snapRows = [];
 
       for (const row of rowsForThisPeriod) {
-        const cleanNo = String(row.employeeNo || '').trim().toUpperCase();
-        const emp = empMap.get(cleanNo) || empMap.get(`${cleanNo}-STR`);
+        const resolved = row._resolved;
+        const cleanNo = String(resolved?.employeeNo || row.employeeNo || '').trim().replace(/^['"`\s]+/, '').toUpperCase();
+        const emp = empMap.get(cleanNo) || (!resolved ? empMap.get(`${cleanNo}-STR`) : null);
         if (!emp) continue;
         if (seenEmpIds.has(emp.id)) continue;
         seenEmpIds.add(emp.id);
 
+        const rowEndDate = resolved ? resolved.endDate : emp.endDate;
         let status = 'ACTIVE';
-        if (emp.endDate && new Date(emp.endDate) < new Date(period.periodEnd)) {
+        if (rowEndDate && new Date(rowEndDate) < new Date(period.periodEnd)) {
           status = 'INACTIVE';
         }
 
-        const rowSalary = row.baseSalary !== undefined && row.baseSalary !== null && row.baseSalary !== ''
-          ? (typeof row.baseSalary === 'number' ? row.baseSalary : parseFloat(String(row.baseSalary).replace(/[^0-9.-]+/g, '')) || 0)
-          : (emp.baseSalary ? parseFloat(emp.baseSalary) : 0);
+        const rowBirthDate = resolved?.birthDate ?? emp.birthDate;
+        const rowJoinDate = resolved?.joinDate ?? emp.joinDate;
+        const rowSalary = resolved?.baseSalary !== undefined && resolved?.baseSalary !== null
+          ? resolved.baseSalary
+          : (row.baseSalary !== undefined && row.baseSalary !== null && row.baseSalary !== ''
+            ? (typeof row.baseSalary === 'number' ? row.baseSalary : parseFloat(String(row.baseSalary).replace(/[^0-9.-]+/g, '')) || 0)
+            : (emp.baseSalary ? parseFloat(emp.baseSalary) : 0));
 
         snapRows.push({
           periodId: period.id,
           employeeId: emp.id,
-          divisionId: emp.divisionId,
-          departmentId: emp.departmentId,
-          positionId: emp.positionId,
-          storeId: emp.storeId,
-          employeeLevel: emp.position?.employeeLevel || null,
-          employmentType: emp.employmentType,
-          ageYears: emp.birthDate ? (period.year - new Date(emp.birthDate).getFullYear()) : null,
-          tenureYears: emp.joinDate ? Math.max(0, (new Date(period.periodEnd) - new Date(emp.joinDate)) / (1000 * 60 * 60 * 24 * 365.25)) : null,
+          divisionId: resolved ? resolved.divisionId : emp.divisionId,
+          departmentId: resolved ? resolved.departmentId : emp.departmentId,
+          positionId: resolved ? resolved.positionId : emp.positionId,
+          storeId: resolved ? resolved.storeId : emp.storeId,
+          employeeLevel: resolved ? resolved.employeeLevel : (emp.position?.employeeLevel || null),
+          employmentType: resolved ? resolved.employmentType : emp.employmentType,
+          ageYears: rowBirthDate ? (period.year - new Date(rowBirthDate).getFullYear()) : null,
+          tenureYears: rowJoinDate ? Math.max(0, (new Date(period.periodEnd) - new Date(rowJoinDate)) / (1000 * 60 * 60 * 24 * 365.25)) : null,
           employmentStatus: status,
-          bpjsKetenagakerjaan: Boolean(emp.bpjsKetenagakerjaan),
-          bpjsKesehatan: Boolean(emp.bpjsKesehatan),
+          bpjsKetenagakerjaan: resolved ? Boolean(resolved.bpjsKetenagakerjaan) : Boolean(emp.bpjsKetenagakerjaan),
+          bpjsKesehatan: resolved ? Boolean(resolved.bpjsKesehatan) : Boolean(emp.bpjsKesehatan),
           budgetLabourCost: rowSalary,
           actualLabourCost: null
         });
@@ -412,6 +426,7 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
       // Hitung komposisi karyawan HO vs Toko yang diunggah untuk periode ini
       const incomingHoCount = snapRows.filter(s => s.storeId === null).length;
       const incomingStoreCount = snapRows.filter(s => s.storeId !== null).length;
+      const incomingEmpIds = snapRows.map(s => s.employeeId);
 
       // Logika pembersihan snapshot yang presisi & terisolasi:
       if (incomingHoCount >= 5 && incomingStoreCount >= 5) {
@@ -420,44 +435,29 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
           where: { periodId: period.id }
         });
       } else if (incomingStoreCount > 0 && incomingHoCount < 5) {
-        // File adalah data Toko (Store) -> HANYA bersihkan data Toko lama, DATA HO LAMA TETAP AMAN!
+        // File adalah data Toko (Store) -> Bersihkan data Toko lama & pastikan employeeId yg masuk tidak bentrok
         await prisma.employeeMonthlySnapshot.deleteMany({
           where: {
             periodId: period.id,
-            storeId: { not: null }
+            OR: [
+              { storeId: { not: null } },
+              { employeeId: { in: incomingEmpIds } }
+            ]
           }
         });
-        // Jika ada 1-4 baris anomali HO di file toko, hapus hanya untuk employeeId spesifik tersebut agar tidak duplikat
-        if (incomingHoCount > 0) {
-          const hoEmpIds = snapRows.filter(s => s.storeId === null).map(s => s.employeeId);
-          await prisma.employeeMonthlySnapshot.deleteMany({
-            where: {
-              periodId: period.id,
-              employeeId: { in: hoEmpIds }
-            }
-          });
-        }
       } else if (incomingHoCount > 0 && incomingStoreCount < 5) {
-        // File adalah data HO (Kantor Pusat) -> HANYA bersihkan data HO lama, DATA TOKO LAMA TETAP AMAN!
+        // File adalah data HO (Kantor Pusat) -> Bersihkan data HO lama & pastikan employeeId yg masuk tidak bentrok
         await prisma.employeeMonthlySnapshot.deleteMany({
           where: {
             periodId: period.id,
-            storeId: null
+            OR: [
+              { storeId: null },
+              { employeeId: { in: incomingEmpIds } }
+            ]
           }
         });
-        // Jika ada 1-4 baris anomali Toko di file HO, hapus hanya untuk employeeId spesifik tersebut agar tidak duplikat
-        if (incomingStoreCount > 0) {
-          const strEmpIds = snapRows.filter(s => s.storeId !== null).map(s => s.employeeId);
-          await prisma.employeeMonthlySnapshot.deleteMany({
-            where: {
-              periodId: period.id,
-              employeeId: { in: strEmpIds }
-            }
-          });
-        }
       } else {
         // Fallback aman: hapus hanya record untuk employeeId yang akan dimasukkan
-        const incomingEmpIds = snapRows.map(s => s.employeeId);
         await prisma.employeeMonthlySnapshot.deleteMany({
           where: {
             periodId: period.id,
