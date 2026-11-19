@@ -125,6 +125,7 @@ const processBulkImport = async (rawData) => {
   const results = { sukses: 0, gagal: 0, errorList: [] };
 
   for (const row of rawData) {
+    let fullName = row.fullName ? String(row.fullName).trim() : '';
     try {
       // 1. Validasi NIK: Bersihkan petik Excel ('A1516...) dan spasi
       let empNo = String(row.employeeNo || '').trim().replace(/^['"`\s]+/, '').toUpperCase();
@@ -163,16 +164,28 @@ const processBulkImport = async (rawData) => {
       const safePosName = posName ? posName.substring(0, 95) : null;
 
       // Fallback nama jika kosong (seperti baris pertama A15161718 di Excel HO)
-      const fullName = row.fullName && String(row.fullName).trim() !== ''
+      fullName = row.fullName && String(row.fullName).trim() !== ''
         ? String(row.fullName).trim().toUpperCase().substring(0, 190)
         : `KARYAWAN ${empNo}`;
 
       // 2. Antisipasi NIK Ganda antara HO dan Toko (Contoh: A15161760 dipakai Bagus Prayudo & Riko)
       const existingEmp = await prisma.employee.findUnique({ where: { employeeNo: empNo } });
       if (existingEmp && existingEmp.fullName.toUpperCase() !== fullName) {
-        // Jika salah satunya orang Toko dan namanya beda, beri sufiks -STR agar tidak saling timpa
         if (storeName) {
+          // Baris baru orang Toko & berbeda nama -> beri sufiks -STR agar tidak menimpa HO
           empNo = `${empNo}-STR`;
+        } else if (existingEmp.storeId !== null) {
+          // Toko ter-upload lebih dulu tanpa -STR -> pindahkan NIK Toko eksisting ke -STR agar tidak saling timpa
+          const strNo = `${empNo}-STR`;
+          const strTaken = await prisma.employee.findUnique({ where: { employeeNo: strNo } });
+          if (!strTaken) {
+            await prisma.employee.update({
+              where: { id: existingEmp.id },
+              data: { employeeNo: strNo }
+            });
+          } else {
+            empNo = `${empNo}-HO`;
+          }
         }
       }
       row.employeeNo = empNo;
@@ -295,7 +308,7 @@ const processBulkImport = async (rawData) => {
       };
 
       // 6. Eksekusi Upsert (Pastikan relasi bisa di-disconnect jika karyawan HO tidak punya storeId)
-      await prisma.employee.upsert({
+      const savedEmp = await prisma.employee.upsert({
         where: { employeeNo: empNo },
         create: {
           ...basePayload,
@@ -317,6 +330,7 @@ const processBulkImport = async (rawData) => {
 
       // Simpan atribut resolusi milik baris periode ini agar snapshot historis tidak tertimpa periode lain
       row._resolved = {
+        employeeId: savedEmp.id,
         employeeNo: empNo,
         divisionId,
         departmentId,

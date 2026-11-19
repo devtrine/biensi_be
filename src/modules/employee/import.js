@@ -76,8 +76,10 @@ const detectMonthYearFromText = (text = '') => {
   }
 
   let month = null;
-  for (const [mName, mNum] of Object.entries(MONTH_MAP)) {
-    if (lower.includes(mName)) {
+  const sortedMonths = Object.entries(MONTH_MAP).sort((a, b) => b[0].length - a[0].length);
+  for (const [mName, mNum] of sortedMonths) {
+    const regex = new RegExp(`(?<![a-z])${mName}(?![a-z])`);
+    if (regex.test(lower)) {
       month = mNum;
       break;
     }
@@ -118,12 +120,12 @@ const parseMonthYearValue = (rawMonth, rawYear, fallback) => {
     return { year: rawYear.getFullYear(), month: rawYear.getMonth() + 1 };
   }
 
-  // 2. Dukungan format Excel Serial Date (misal 45566)
-  if (typeof rawMonth === 'number' && rawMonth > 1000) {
+  // 2. Dukungan format Excel Serial Date (misal 45566 -> tahun ~2024; hindari angka tahun seperti 2024/2025/2026)
+  if (typeof rawMonth === 'number' && rawMonth >= 30000 && rawMonth <= 100000) {
     const d = excelDateToJSDate(rawMonth);
     if (d) return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
   }
-  if (typeof rawYear === 'number' && rawYear > 1000) {
+  if (typeof rawYear === 'number' && rawYear >= 30000 && rawYear <= 100000) {
     const d = excelDateToJSDate(rawYear);
     if (d) return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
   }
@@ -152,9 +154,11 @@ const parseMonthYearValue = (rawMonth, rawYear, fallback) => {
       if (yrInMonth) year = parseInt(yrInMonth[1], 10);
     }
 
-    // Cek apakah cocok dengan nama bulan
-    for (const [mName, mNum] of Object.entries(MONTH_MAP)) {
-      if (mStr.includes(mName)) {
+    // Cek apakah cocok dengan nama bulan (prioritaskan nama lengkap dengan batas huruf)
+    const sortedMonths = Object.entries(MONTH_MAP).sort((a, b) => b[0].length - a[0].length);
+    for (const [mName, mNum] of sortedMonths) {
+      const regex = new RegExp(`(?<![a-z])${mName}(?![a-z])`);
+      if (regex.test(mStr)) {
         month = mNum;
         break;
       }
@@ -318,12 +322,16 @@ const processExcelImport = async (filePath, originalFilename = '') => {
   const importResult = await repository.processBulkImport(chronologicalRows);
 
   // Auto-generate & timpa reporting periods & snapshots sesuai Bulan & Tahun di Excel secara aman terisolasi
-  await syncSnapshotsAfterEmployeeImport(formattedData);
+  const syncWarnings = await syncSnapshotsAfterEmployeeImport(formattedData);
+  if (syncWarnings.length > 0) {
+    importResult.errorList.push(...syncWarnings);
+  }
 
   return importResult;
 };
 
 const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
+  const warnings = [];
   try {
     // 1. Kumpulkan semua periode unik (Tahun & Bulan) yang ada di baris file Excel yang di-upload
     const periodMap = new Map();
@@ -339,24 +347,32 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
       periodMap.set(`${now.getFullYear()}-${now.getMonth() + 1}`, { year: now.getFullYear(), month: now.getMonth() + 1 });
     }
 
-    // 2. Kumpulkan semua NIK yang ada di file Excel dan ambil data employee dari database
+    // 2. Kumpulkan semua ID & NIK yang ada di file Excel dan ambil data employee dari database
+    const resolvedIds = Array.from(new Set(
+      formattedData.map(r => r._resolved?.employeeId).filter(Boolean)
+    ));
     const empNos = Array.from(new Set(
       formattedData.map(r => String(r._resolved?.employeeNo || r.employeeNo || '').trim().replace(/^['"`\s]+/, '').toUpperCase())
     )).filter(Boolean);
     const empNosWithStr = empNos.map(no => no.endsWith('-STR') ? no : `${no}-STR`);
+    const empNosWithHo = empNos.map(no => no.endsWith('-HO') ? no : `${no}-HO`);
 
     const matchingEmployees = await prisma.employee.findMany({
       where: {
         OR: [
+          ...(resolvedIds.length > 0 ? [{ id: { in: resolvedIds } }] : []),
           { employeeNo: { in: empNos } },
-          { employeeNo: { in: empNosWithStr } }
+          { employeeNo: { in: empNosWithStr } },
+          { employeeNo: { in: empNosWithHo } }
         ]
       },
       include: { position: true, store: true }
     });
 
+    const empById = new Map();
     const empMap = new Map();
     for (const emp of matchingEmployees) {
+      empById.set(emp.id, emp);
       empMap.set(emp.employeeNo.toUpperCase(), emp);
     }
 
@@ -383,9 +399,14 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
       for (const row of rowsForThisPeriod) {
         const resolved = row._resolved;
         const cleanNo = String(resolved?.employeeNo || row.employeeNo || '').trim().replace(/^['"`\s]+/, '').toUpperCase();
-        const emp = empMap.get(cleanNo) || (!resolved ? empMap.get(`${cleanNo}-STR`) : null);
+        const emp = (resolved?.employeeId && empById.get(resolved.employeeId)) ||
+          empMap.get(cleanNo) ||
+          (!resolved ? (empMap.get(`${cleanNo}-STR`) || empMap.get(`${cleanNo}-HO`)) : null);
         if (!emp) continue;
-        if (seenEmpIds.has(emp.id)) continue;
+        if (seenEmpIds.has(emp.id)) {
+          warnings.push(`Baris ${row.rowNumber || 'Data'} (${yr}-${String(m).padStart(2, '0')}, NIK: ${cleanNo}): NIK duplikat dalam periode yang sama sehingga dilewati pada snapshot.`);
+          continue;
+        }
         seenEmpIds.add(emp.id);
 
         const rowEndDate = resolved ? resolved.endDate : emp.endDate;
@@ -474,7 +495,9 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
     }
   } catch (err) {
     console.error('Error auto-syncing snapshots after import:', err.message);
+    warnings.push(`Gagal sinkronisasi snapshot bulanan: ${err.message}`);
   }
+  return warnings;
 };
 
 module.exports = { processExcelImport };

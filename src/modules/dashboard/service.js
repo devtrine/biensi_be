@@ -1099,17 +1099,19 @@ const getMainExecutiveDashboard = async (filters = {}) => {
     periodSnapMap[s.periodId].total++;
   });
 
-  const headcountTrajectory = trajectoryPeriods.map(p => {
-    const stats = periodSnapMap[p.id] || { store: 0, hq: 0, total: 0 };
-    return {
-      periodId: p.id,
-      year: p.year,
-      month: p.month,
-      store: stats.store,
-      hq: stats.hq,
-      total: stats.total
-    };
-  });
+  const headcountTrajectory = trajectoryPeriods
+    .map(p => {
+      const stats = periodSnapMap[p.id] || { store: 0, hq: 0, total: 0 };
+      return {
+        periodId: p.id,
+        year: p.year,
+        month: p.month,
+        store: stats.store,
+        hq: stats.hq,
+        total: stats.total
+      };
+    })
+    .filter(item => item.total > 0 || item.periodId === period.id);
 
   summaryData.headcountTrajectory = headcountTrajectory;
   if (summaryData.demographics) {
