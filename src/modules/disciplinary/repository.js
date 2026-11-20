@@ -12,9 +12,14 @@ const normalizeText = (val) => {
 const resolveRelations = async (row) => {
   let storeId = null, divisionId = null, departmentId = null;
 
-  // 1. Resolve Store (Selalu Uppercase agar tidak duplikat)
-  const cleanStoreName = normalizeText(row.storeName);
-  if (cleanStoreName && cleanStoreName !== 'TOTAL') {
+  // 1. Resolve Store (Abaikan penanda HO/kosong agar tidak tercipta toko palsu)
+  const rawStore = normalizeText(row.storeName);
+  const ignoredStores = ['-', 'TOTAL', 'HO', 'PUSAT', 'KANTOR PUSAT', 'HEAD OFFICE', 'N/A', 'NA', '0', 'NONE', 'NULL'];
+  const cleanStoreName = (rawStore && !ignoredStores.includes(rawStore) && !rawStore.startsWith('HO ') && !rawStore.startsWith('HO-'))
+    ? rawStore
+    : null;
+
+  if (cleanStoreName) {
     let store = await prisma.store.findFirst({
       where: { storeName: { equals: cleanStoreName, mode: 'insensitive' } }
     });
@@ -22,11 +27,11 @@ const resolveRelations = async (row) => {
       store = await prisma.store.create({
         data: {
           storeName: cleanStoreName,
-          storeCode: `STR-${Date.now()}-${Math.floor(Math.random() * 100)}`,
+          storeCode: `STR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           region: normalizeText(row.region) || null
         }
       });
-    } else if (row.region) {
+    } else if (row.region && store.region !== normalizeText(row.region)) {
       await prisma.store.update({
         where: { id: store.id },
         data: { region: normalizeText(row.region) }
@@ -43,7 +48,7 @@ const resolveRelations = async (row) => {
     });
     if (!div) {
       div = await prisma.division.create({
-        data: { name: cleanDivName, code: `DIV-${Date.now()}-${Math.floor(Math.random() * 100)}` }
+        data: { name: cleanDivName, code: `DIV-${Date.now()}-${Math.floor(Math.random() * 1000)}` }
       });
     }
     divisionId = div.id;
@@ -56,31 +61,41 @@ const resolveRelations = async (row) => {
     });
     if (!dept) {
       dept = await prisma.department.create({
-        data: { name: cleanDeptName, code: `DPT-${Date.now()}-${Math.floor(Math.random() * 100)}`, divisionId }
+        data: { name: cleanDeptName, code: `DPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`, divisionId }
       });
     }
     departmentId = dept.id;
   }
 
-  // 3. Resolve Employee (Cari via NIK dulu, lalu fallback ke Nama)
+  // 3. Resolve Employee (Prioritaskan NIK beserta variasi sufiks -STR / -HO sesuai konteks lokasi)
   let employee = null;
   const cleanName = String(row.employeeName || '').trim().toUpperCase();
-  const cleanEmpNo = row.employeeNo ? String(row.employeeNo).trim().toUpperCase() : null;
+  const cleanEmpNo = row.employeeNo
+    ? String(row.employeeNo).trim().replace(/^['"`\s]+/, '').toUpperCase()
+    : null;
 
   if (cleanEmpNo) {
-    employee = await prisma.employee.findFirst({
-      where: { employeeNo: { equals: cleanEmpNo, mode: 'insensitive' } }
-    });
-  }
-  if (!employee && cleanName) {
+    // [FIX] Cek variasi NIK sesuai lingkup (Toko -> cek -STR dulu; HO -> cek -HO dulu)
+    const candidateNos = storeId
+      ? [`${cleanEmpNo}-STR`, cleanEmpNo]
+      : [`${cleanEmpNo}-HO`, cleanEmpNo];
+
+    for (const candidate of candidateNos) {
+      employee = await prisma.employee.findFirst({
+        where: { employeeNo: { equals: candidate, mode: 'insensitive' } }
+      });
+      if (employee) break;
+    }
+  } else if (cleanName && !['UJI', 'COBA'].includes(cleanName)) {
+    // [FIX] Fallback nama HANYA jika baris Excel tidak punya NIK dan bukan nama dummy anonim
     employee = await prisma.employee.findFirst({
       where: { fullName: { equals: cleanName, mode: 'insensitive' } }
     });
   }
 
-  // Fallback Auto-Create (Tetap aman karena gender & baseSalary dibiarkan null sehingga tidak masuk Snapshot aktif)
+  // Fallback Auto-Create (Aman: gender & baseSalary dibiarkan null sehingga tidak masuk Snapshot aktif)
   if (!employee) {
-    const dummyNIK = cleanEmpNo || `EX-CASE-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 100)}`;
+    const dummyNIK = cleanEmpNo || `EX-CASE-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
     employee = await prisma.employee.create({
       data: {
         employeeNo: dummyNIK,
@@ -127,7 +142,15 @@ const processBulkSP = async (parsedData) => {
     try {
       const rel = await resolveRelations(row);
       const validStartDate = row.startDate || row.endDate || new Date();
-      const discType = row.disciplineName || 'Surat Peringatan';
+      const discType = row.disciplineName ? String(row.disciplineName).trim() : 'Surat Peringatan';
+
+      // [FIX] Pengaman ganda di level repository: paksa referenceNo & remark selalu String atau null
+      const normalizedRefNo = (row.referenceNo !== undefined && row.referenceNo !== null && String(row.referenceNo).trim() !== '')
+        ? String(row.referenceNo).trim()
+        : null;
+      const normalizedRemark = (row.remark !== undefined && row.remark !== null && String(row.remark).trim() !== '')
+        ? String(row.remark).trim()
+        : null;
 
       // Cek apakah SP untuk karyawan ini pada tanggal & jenis SP yang sama sudah ada
       const existingSP = await prisma.disciplinaryCase.findFirst({
@@ -146,7 +169,7 @@ const processBulkSP = async (parsedData) => {
         category: row.category || 'Tata Tertib',
         startDate: validStartDate,
         endDate: row.endDate,
-        remark: row.remark || null,
+        remark: normalizedRemark,
         divisionId: rel.divisionId,
         departmentId: rel.departmentId,
         storeId: rel.storeId,
@@ -158,14 +181,14 @@ const processBulkSP = async (parsedData) => {
           where: { id: existingSP.id },
           data: {
             ...spPayload,
-            referenceNo: row.referenceNo || existingSP.referenceNo
+            referenceNo: normalizedRefNo || existingSP.referenceNo
           }
         });
       } else {
         await prisma.disciplinaryCase.create({
           data: {
             ...spPayload,
-            referenceNo: row.referenceNo || `SP-${Date.now().toString().slice(-5)}-${Math.floor(Math.random() * 100)}`
+            referenceNo: normalizedRefNo || `SP-${Date.now().toString().slice(-5)}-${Math.floor(Math.random() * 100)}`
           }
         });
       }

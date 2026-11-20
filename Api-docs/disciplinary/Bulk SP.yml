@@ -12,7 +12,7 @@ http:
       - name: file
         type: file
         value:
-          - C:\yt-dlp\spToko.xlsx
+          - C:\Users\ASUS\Downloads\Template_Surat_Peringatan_SP (1) dummy.xlsx
         contentType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
   auth: inherit
 

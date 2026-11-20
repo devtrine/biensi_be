@@ -81,6 +81,13 @@ const importBulkSP = async (filePath) => {
   const workbook = xlsx.readFile(filePath);
   let allData = [];
 
+  // [FIX] Helper pembersih teks (konversi aman ke String & bersihkan non-breaking space \u00A0)
+  const cleanStr = (val) => {
+    if (val === undefined || val === null) return null;
+    const cleaned = String(val).replace(/\u00A0/g, ' ').trim();
+    return cleaned !== '' ? cleaned : null;
+  };
+
   // Saring sheet untuk SP
   let targetSheets = workbook.SheetNames.filter(name => {
     const lower = name.toLowerCase();
@@ -104,33 +111,47 @@ const importBulkSP = async (filePath) => {
     const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
     if (rawMatrix.length === 0) continue;
 
-    let col = {}; let dataStartRow = 0;
+    let col = {};
+    let headerRow = -1;
+    let dataStartRow = 0;
 
-    // Matrix Scanner (Maksimal 10 Baris Pertama)
-    for (let r = 0; r < Math.min(10, rawMatrix.length); r++) {
+    // [FIX] Matrix Scanner: berhenti maksimal 1 baris setelah baris header utama (untuk sub-header),
+    // sehingga baris data (misal "Store Leader Area 5") tidak pernah ikut terpindai sebagai header
+    const maxScanRow = Math.min(10, rawMatrix.length);
+    for (let r = 0; r < maxScanRow; r++) {
+      if (headerRow !== -1 && r > headerRow + 1) break;
+
       const row = rawMatrix[r] || [];
       for (let c = 0; c < row.length; c++) {
-        const cell = String(row[c] || '').toUpperCase().replace(/\s+/g, '');
+        const cell = String(row[c] || '').replace(/\u00A0/g, ' ').toUpperCase().replace(/\s+/g, '');
         if (!cell) continue;
 
         if ((cell === 'NAME' || cell.includes('NAMAKARYAWAN')) && col.name === undefined) {
           col.name = c;
+          headerRow = r;
           dataStartRow = Math.max(dataStartRow, r + 1);
         }
-        else if (cell.includes('EMPLOYEENO') || cell.includes('NIK')) col.empNo = c;
-        else if (cell.includes('REFERENCENO') || cell.includes('NOREF')) { col.refNo = c; dataStartRow = Math.max(dataStartRow, r + 1); }
-        else if (cell.includes('STORENAME') || cell.includes('SHOWROOM') || cell.includes('NAMATOKO') || cell.includes('TOKO')) col.store = c;
-        else if (cell.includes('AREAREGIONAL') || cell.includes('REGIONAL') || cell.includes('AREA')) col.area = c;
-        else if (cell === 'DIVISI') col.divisi = c;
-        else if (cell.includes('DEPARTEMENT') || cell.includes('DEPARTMENT')) col.dept = c;
-        else if (cell.includes('POSITION') || cell.includes('JABATAN')) col.position = c;
-        else if (cell.includes('DISCIPLINESNAME') || cell.includes('JENISSP')) { col.discName = c; dataStartRow = Math.max(dataStartRow, r + 1); }
-        else if (cell.includes('STARTDATE') || cell.includes('TANGGALMULAI')) col.startDate = c;
-        else if (cell.includes('ENDDATE') || cell.includes('TANGGALSELESAI') || cell.includes('TANGGALBERAKHIR')) col.endDate = c;
-        else if (cell.includes('NONTATATERTIB')) col.nonTataTertib = c;
-        else if (cell.includes('TATATERTIB')) col.tataTertib = c;
-        else if (cell === 'PERIODE') col.periode = c;
-        else if (cell === 'KETERANGAN' || cell === 'REMARK') col.remark = c;
+        else if ((cell.includes('EMPLOYEENO') || cell.includes('NIK')) && col.empNo === undefined) col.empNo = c;
+        else if ((cell.includes('REFERENCENO') || cell.includes('NOREF')) && col.refNo === undefined) {
+          col.refNo = c;
+          dataStartRow = Math.max(dataStartRow, r + 1);
+        }
+        else if ((cell.includes('STORENAME') || cell.includes('SHOWROOM') || cell.includes('NAMATOKO') || cell.includes('TOKO')) && col.store === undefined) col.store = c;
+        else if ((cell.includes('AREAREGIONAL') || cell.includes('REGIONAL') || cell === 'AREA') && col.area === undefined) col.area = c;
+        else if (cell === 'DIVISI' && col.divisi === undefined) col.divisi = c;
+        else if ((cell.includes('DEPARTEMENT') || cell.includes('DEPARTMENT')) && col.dept === undefined) col.dept = c;
+        // [FIX] Kecualikan LEVELJABATAN agar tidak menimpa kolom Position
+        else if ((cell === 'POSITION' || (cell.includes('JABATAN') && !cell.includes('LEVEL'))) && col.position === undefined) col.position = c;
+        else if ((cell.includes('DISCIPLINESNAME') || cell.includes('JENISSP')) && col.discName === undefined) {
+          col.discName = c;
+          dataStartRow = Math.max(dataStartRow, r + 1);
+        }
+        else if ((cell.includes('STARTDATE') || cell.includes('TANGGALMULAI')) && col.startDate === undefined) col.startDate = c;
+        else if ((cell.includes('ENDDATE') || cell.includes('TANGGALSELESAI') || cell.includes('TANGGALBERAKHIR')) && col.endDate === undefined) col.endDate = c;
+        else if (cell.includes('NONTATATERTIB') && col.nonTataTertib === undefined) col.nonTataTertib = c;
+        else if (cell.includes('TATATERTIB') && !cell.includes('NONTATATERTIB') && col.tataTertib === undefined) col.tataTertib = c;
+        else if (cell === 'PERIODE' && col.periode === undefined) col.periode = c;
+        else if ((cell === 'KETERANGAN' || cell === 'REMARK') && col.remark === undefined) col.remark = c;
       }
     }
 
@@ -139,31 +160,33 @@ const importBulkSP = async (filePath) => {
 
     for (let r = dataStartRow; r < rawMatrix.length; r++) {
       const row = rawMatrix[r] || [];
-      const empName = row[col.name];
-      if (!empName || String(empName).toUpperCase().includes('NAME')) continue;
+      const empName = cleanStr(row[col.name]);
+      if (!empName || empName.toUpperCase().includes('NAME')) continue;
 
-      let category = 'Tata Tertib';
-      if (col.nonTataTertib !== undefined && row[col.nonTataTertib]) {
-        category = 'Non Tata Tertib';
-      }
+      // [FIX] Tangani angka 0 maupun teks '0' agar tidak salah masuk Non Tata Tertib
+      const rawNonTt = col.nonTataTertib !== undefined ? row[col.nonTataTertib] : null;
+      const nonTtStr = rawNonTt !== null && rawNonTt !== undefined ? String(rawNonTt).trim().toLowerCase() : '';
+      const isNonTataTertib = nonTtStr !== '' && nonTtStr !== '0' && nonTtStr !== 'false' && nonTtStr !== '-';
+      const category = isNonTataTertib ? 'Non Tata Tertib' : 'Tata Tertib';
 
       const startDate = parseFlexibleDate(row[col.startDate]) || parseFlexibleDate(row[col.periode]);
       const endDate = parseFlexibleDate(row[col.endDate]);
 
+      // [FIX] Pastikan seluruh field teks (terutama referenceNo) dikonversi aman ke String atau null
       allData.push({
         employeeName: empName,
-        employeeNo: col.empNo !== undefined ? row[col.empNo] : null,
-        storeName: col.store !== undefined ? row[col.store] : null,
-        region: col.area !== undefined ? row[col.area] : null,
-        divisionName: col.divisi !== undefined ? row[col.divisi] : null,
-        departmentName: col.dept !== undefined ? row[col.dept] : null,
-        positionName: col.position !== undefined ? row[col.position] : null,
-        referenceNo: col.refNo !== undefined ? row[col.refNo] : null,
-        disciplineName: col.discName !== undefined ? row[col.discName] : 'Surat Peringatan',
+        employeeNo: col.empNo !== undefined ? cleanStr(row[col.empNo]) : null,
+        storeName: col.store !== undefined ? cleanStr(row[col.store]) : null,
+        region: col.area !== undefined ? cleanStr(row[col.area]) : null,
+        divisionName: col.divisi !== undefined ? cleanStr(row[col.divisi]) : null,
+        departmentName: col.dept !== undefined ? cleanStr(row[col.dept]) : null,
+        positionName: col.position !== undefined ? cleanStr(row[col.position]) : null,
+        referenceNo: col.refNo !== undefined ? cleanStr(row[col.refNo]) : null,
+        disciplineName: (col.discName !== undefined ? cleanStr(row[col.discName]) : null) || 'Surat Peringatan',
         startDate,
         endDate,
         category,
-        remark: col.remark !== undefined ? row[col.remark] : null
+        remark: col.remark !== undefined ? cleanStr(row[col.remark]) : null
       });
     }
   }
