@@ -611,8 +611,8 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
   const avgAge = validAgeCount ? (totalAge / validAgeCount).toFixed(1) : 0;
 
   const productionEmployees = snapshots.filter(s => {
-    const deptName = String(s.department?.name || s.employee?.department?.name || '').toUpperCase().trim();
-    return deptName === 'PRODUCTION' || deptName.includes('PRODUKSI');
+    const divName = String(s.division?.name || s.employee?.division?.name || '').toUpperCase().trim();
+    return divName === 'SUPPLY CHAIN' || divName.includes('SUPPLY CHAIN');
   });
 
   const prodHeadcount = productionEmployees.length;
@@ -1037,9 +1037,10 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
 };
 
 const getMainExecutiveDashboard = async (filters = {}) => {
-  const year = parseInt(filters.year, 10) || new Date().getFullYear();
+const year = parseInt(filters.year, 10) || new Date().getFullYear();
   const month = parseInt(filters.month, 10) || new Date().getMonth() + 1;
   const scope = filters.scope || 'Corporate';
+  const spYear = filters.spYear || null; // [FIX] Terima filter tahun SP ('ALL' atau tahun tertentu)
 
   const period = await repository.getPeriodByDate(year, month);
   if (!period) {
@@ -1051,7 +1052,7 @@ const getMainExecutiveDashboard = async (filters = {}) => {
     getDashboardSummary(period.id, scope),
     getStorePerformanceDashboard(period.id, year),
     getTurnoverDashboard(year, month, scope),
-    repository.getIndustrialAndSpSummary(year, month)
+    repository.getIndustrialAndSpSummary(year, month, spYear)
   ]);
 
   const monthlyResigned = turnoverData.data.overview.kpi.monthlyTurnover || 0;

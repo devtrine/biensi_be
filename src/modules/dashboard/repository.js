@@ -56,7 +56,7 @@ const getMonthlySnapshots = async (periodId, year) => {
     include: includeRel
   });
 
-  // Jangan buang karyawan yang gender-nya null agar konsisten dengan headcountTrajectory
+  // [Jangan buang karyawan yang gender-nya null agar konsisten dengan headcountTrajectory
   return snapshots.filter(s => Boolean(s.employee));
 };
 
@@ -213,27 +213,34 @@ const getAttendanceBothScopes = async (periodId, year = null) => {
 };
 
 // Ambil Ringkasan SP Toko, SP HO, Bipartit, Kontrak Lewat Jatuh Tempo, & Perizinan (WLKP/PP/K3)
-const getIndustrialAndSpSummary = async (year, month = null) => {
+// Ambil Ringkasan SP Toko, SP HO, Bipartit, Kontrak Lewat Jatuh Tempo, & Perizinan (WLKP/PP/K3)
+const getIndustrialAndSpSummary = async (year, month = null, spYear = null) => {
   const numYear = parseInt(year, 10) || new Date().getFullYear();
   const numMonth = month ? parseInt(month, 10) : 12;
-  const startOfYear = new Date(Date.UTC(numYear, 0, 1, 0, 0, 0));
   const refDate = new Date(Date.UTC(numYear, numMonth, 0, 23, 59, 59));
+  const today = new Date();
 
-  const [spStoreRecords, discCases, irCases, overdueContracts, compliances] = await Promise.all([
+  // Tentukan mode filter SP: 'ALL' (keseluruhan) atau tahun tertentu (default mengikuti numYear)
+  const isAllSpYear = String(spYear || '').toUpperCase() === 'ALL';
+  const targetSpYear = !isAllSpYear ? (parseInt(spYear, 10) || numYear) : null;
+
+  const [spStoreRecords, allDiscCases, irCases, overdueContracts, compliances] = await Promise.all([
     prisma.spAggregateMonthly.findMany({
       where: {
         scope: 'STORE',
-        period: {
-          year: numYear,
-          ...(month ? { month: { lte: numMonth } } : {})
-        }
+        ...(targetSpYear ? {
+          period: {
+            year: targetSpYear,
+            ...(targetSpYear === numYear && month ? { month: { lte: numMonth } } : {})
+          }
+        } : {})
       },
       include: { period: true }
     }),
+    // Tarik seluruh data disciplinaryCase (non Fraud & Audit) agar bisa dihitung All-Time sekaligus per Tahun
     prisma.disciplinaryCase.findMany({
       where: {
-        category: { not: 'Fraud & Audit' },
-        startDate: { gte: startOfYear, lte: refDate }
+        category: { not: 'Fraud & Audit' }
       },
       include: { store: true }
     }),
@@ -274,84 +281,141 @@ const getIndustrialAndSpSummary = async (year, month = null) => {
     })
   ]);
 
-  const isCaseActiveAtRef = (c) => {
+  const isCaseActiveAtDate = (c, compareDate) => {
     const stUpper = String(c.status || '').toUpperCase();
     const discUpper = String(c.disciplineType || '').toUpperCase();
     if (stUpper.includes('NON') || stUpper.includes('EXPIRED') || discUpper.includes('PHK')) return false;
-    if (c.endDate) return new Date(c.endDate) >= refDate;
+    if (c.endDate) return new Date(c.endDate) >= compareDate;
     if (c.startDate) {
       const exp = new Date(c.startDate);
       exp.setUTCMonth(exp.getUTCMonth() + 6);
-      return exp >= refDate;
+      return exp >= compareDate;
     }
     return true;
   };
 
-  const spHoCases = discCases.filter(c => c.storeId === null);
-  const spStoreCases = discCases.filter(c => c.storeId !== null);
+  // Helper agregasi daftar kasus SP (Store + HQ)
+  const summarizeDisciplinaryList = (cases, compareDate) => {
+    const store = { total: 0, spAktif: 0, spNonAktif: 0, tataTertib: 0, nonTataTertib: 0, sp1: 0, sp2: 0, sp3: 0, barat: 0, timur: 0 };
+    const hq = { total: 0, spAktif: 0, spNonAktif: 0, tataTertib: 0, nonTataTertib: 0, sp1: 0, sp2: 0, sp3: 0 };
 
-  // Poin 6: Penamaan Jumlah SP Aktif & Jumlah SP Non Aktif berdasarkan masa berlaku 6 bulan / End Date
-  const storeSp = { total: 0, spAktif: 0, spNonAktif: 0, tataTertib: 0, nonTataTertib: 0, sp1: 0, sp2: 0, sp3: 0, barat: 0, timur: 0 };
+    cases.forEach(c => {
+      const isStore = c.storeId !== null;
+      const target = isStore ? store : hq;
 
-  if (spStoreRecords.length > 0) {
+      target.total++;
+      if (isCaseActiveAtDate(c, compareDate)) target.spAktif++;
+      else target.spNonAktif++;
+
+      if (String(c.category || '').toUpperCase().includes('NON')) target.nonTataTertib++;
+      else target.tataTertib++;
+
+      const dt = String(c.disciplineType || '').toUpperCase();
+      if (dt.includes('1')) target.sp1++;
+      else if (dt.includes('2')) target.sp2++;
+      else if (dt.includes('3')) target.sp3++;
+
+      if (isStore) {
+        const reg = String(c.store?.region || '').toUpperCase();
+        if (reg === 'TIMUR') store.timur++;
+        else if (reg === 'BARAT') store.barat++;
+      }
+    });
+
+    const corporate = {
+      total: store.total + hq.total,
+      spAktif: store.spAktif + hq.spAktif,
+      spNonAktif: store.spNonAktif + hq.spNonAktif,
+      tataTertib: store.tataTertib + hq.tataTertib,
+      nonTataTertib: store.nonTataTertib + hq.nonTataTertib,
+      sp1: store.sp1 + hq.sp1,
+      sp2: store.sp2 + hq.sp2,
+      sp3: store.sp3 + hq.sp3
+    };
+
+    return { corporate, store, hq };
+  };
+
+  // 1. Rekap Keseluruhan (All-Time tanpa filter tahun)
+  const allTimeSummary = summarizeDisciplinaryList(allDiscCases, today);
+
+  // 2. Pecahan Per Tahun (untuk dropdown / chart perbandingan tahunan)
+  const casesByYearMap = {};
+  allDiscCases.forEach(c => {
+    const y = c.startDate ? new Date(c.startDate).getUTCFullYear() : numYear;
+    if (!casesByYearMap[y]) casesByYearMap[y] = [];
+    casesByYearMap[y].push(c);
+  });
+
+  const byYear = Object.keys(casesByYearMap)
+    .map(Number)
+    .sort((a, b) => b - a)
+    .map(y => {
+      const yearRef = y === numYear ? refDate : (y < today.getUTCFullYear() ? new Date(Date.UTC(y, 11, 31, 23, 59, 59)) : today);
+      const summary = summarizeDisciplinaryList(casesByYearMap[y], yearRef);
+      return {
+        year: y,
+        total: summary.corporate.total,
+        spAktif: summary.corporate.spAktif,
+        spNonAktif: summary.corporate.spNonAktif,
+        store: summary.store.total,
+        hq: summary.hq.total,
+        tataTertib: summary.corporate.tataTertib,
+        nonTataTertib: summary.corporate.nonTataTertib,
+        detail: summary
+      };
+    });
+
+  // 3. Data Utama Sesuai Filter spYear ('ALL' atau tahun terpilih)
+  const filteredDiscCases = isAllSpYear
+    ? allDiscCases
+    : allDiscCases.filter(c => {
+        if (!c.startDate) return false;
+        const d = new Date(c.startDate);
+        if (d.getUTCFullYear() !== targetSpYear) return false;
+        if (targetSpYear === numYear && month) return d <= refDate;
+        return true;
+      });
+
+  const activeCompareDate = isAllSpYear ? today : (targetSpYear === numYear ? refDate : new Date(Date.UTC(targetSpYear, 11, 31, 23, 59, 59)));
+  const activeSummary = summarizeDisciplinaryList(filteredDiscCases, activeCompareDate);
+
+  // Jika masih ada data legacy di spAggregateMonthly (dan tidak ada detail di disciplinaryCase)
+  if (spStoreRecords.length > 0 && activeSummary.store.total === 0) {
     spStoreRecords.forEach(r => {
       const m = r.period?.month || 1;
       const brk = r.breakdown || {};
       const phkCnt = brk.bySpLevel?.phk || 0;
       const nonPhk = Math.max(0, r.totalSpIssued - phkCnt);
 
-      storeSp.total += r.totalSpIssued;
-      storeSp.tataTertib += r.tataTertibCount;
-      storeSp.nonTataTertib += r.nonTataTertibCount;
+      activeSummary.store.total += r.totalSpIssued;
+      activeSummary.store.tataTertib += r.tataTertibCount;
+      activeSummary.store.nonTataTertib += r.nonTataTertibCount;
 
       if (m > numMonth - 6) {
-        storeSp.spAktif += nonPhk;
-        storeSp.spNonAktif += phkCnt;
+        activeSummary.store.spAktif += nonPhk;
+        activeSummary.store.spNonAktif += phkCnt;
       } else {
-        storeSp.spNonAktif += r.totalSpIssued;
+        activeSummary.store.spNonAktif += r.totalSpIssued;
       }
 
       if (brk.bySpLevel) {
-        storeSp.sp1 += (brk.bySpLevel.sp1 || 0);
-        storeSp.sp2 += (brk.bySpLevel.sp2 || 0);
-        storeSp.sp3 += (brk.bySpLevel.sp3 || 0);
+        activeSummary.store.sp1 += (brk.bySpLevel.sp1 || 0);
+        activeSummary.store.sp2 += (brk.bySpLevel.sp2 || 0);
+        activeSummary.store.sp3 += (brk.bySpLevel.sp3 || 0);
       }
       if (brk.byRegion) {
-        storeSp.barat += (brk.byRegion.barat || 0);
-        storeSp.timur += (brk.byRegion.timur || 0);
+        activeSummary.store.barat += (brk.byRegion.barat || 0);
+        activeSummary.store.timur += (brk.byRegion.timur || 0);
       }
     });
-  } else {
-    spStoreCases.forEach(c => {
-      storeSp.total++;
-      if (isCaseActiveAtRef(c)) storeSp.spAktif++;
-      else storeSp.spNonAktif++;
 
-      if (String(c.category || '').toUpperCase().includes('NON')) storeSp.nonTataTertib++;
-      else storeSp.tataTertib++;
-
-      const dt = String(c.disciplineType || '').toUpperCase();
-      if (dt.includes('1')) storeSp.sp1++;
-      else if (dt.includes('2')) storeSp.sp2++;
-      else if (dt.includes('3')) storeSp.sp3++;
-
-      const reg = String(c.store?.region || '').toUpperCase();
-      if (reg === 'TIMUR') storeSp.timur++;
-      else if (reg === 'BARAT') storeSp.barat++;
-    });
+    activeSummary.corporate.total = activeSummary.store.total + activeSummary.hq.total;
+    activeSummary.corporate.spAktif = activeSummary.store.spAktif + activeSummary.hq.spAktif;
+    activeSummary.corporate.spNonAktif = activeSummary.store.spNonAktif + activeSummary.hq.spNonAktif;
+    activeSummary.corporate.tataTertib = activeSummary.store.tataTertib + activeSummary.hq.tataTertib;
+    activeSummary.corporate.nonTataTertib = activeSummary.store.nonTataTertib + activeSummary.hq.nonTataTertib;
   }
-
-  let hqSpAktif = 0;
-  let hqSpNonAktif = 0;
-  let hqTataTertib = 0;
-  let hqNonTataTertib = 0;
-  spHoCases.forEach(c => {
-    if (isCaseActiveAtRef(c)) hqSpAktif++;
-    else hqSpNonAktif++;
-
-    if (String(c.category || '').toUpperCase().includes('NON')) hqNonTataTertib++;
-    else hqTataTertib++;
-  });
 
   const countDisputes = (list) => {
     const res = { total: list.length, selesai: 0, proses: 0, bipartit: 0, mediasi: 0, phi: 0 };
@@ -359,14 +423,12 @@ const getIndustrialAndSpSummary = async (year, month = null) => {
       const cat = String(c.caseCategory || '').toUpperCase();
       const st = String(c.status || '').toUpperCase();
 
-      // 1. Status Penyelesaian Kasus
       if (st.includes('CLOSE') || st.includes('SELESAI')) {
         res.selesai++;
       } else {
         res.proses++;
       }
 
-      // 2. Kategori / Jalur Penyelesaian Perselisihan (Independen dari status)
       if (cat.includes('MEDIASI') || cat.includes('DISNAKER') || cat.includes('PIHAK')) {
         res.mediasi++;
       } else if (cat.includes('PHI')) {
@@ -379,7 +441,6 @@ const getIndustrialAndSpSummary = async (year, month = null) => {
   };
 
   // Poin 7: Matriks Perizinan Ketenagakerjaan (WLKP, PP, K3)
-  const today = new Date();
   const thirtyDaysFromNow = new Date(today.getTime() + (30 * 24 * 60 * 60 * 1000));
   const complianceKpi = { total: compliances.length, patuh: 0, akanJatuhTempo: 0, kadaluarsa: 0 };
   const complianceByType = { wlkp: 0, pp: 0, k3: 0, lainnya: 0 };
@@ -462,22 +523,13 @@ const getIndustrialAndSpSummary = async (year, month = null) => {
   };
 
   return {
-    totalSpIssued: storeSp.total + spHoCases.length,
-    corporateSp: {
-      total: storeSp.total + spHoCases.length,
-      spAktif: storeSp.spAktif + hqSpAktif,
-      spNonAktif: storeSp.spNonAktif + hqSpNonAktif,
-      tataTertib: storeSp.tataTertib + hqTataTertib,
-      nonTataTertib: storeSp.nonTataTertib + hqNonTataTertib
-    },
-    storeSp,
-    hqSp: {
-      total: spHoCases.length,
-      spAktif: hqSpAktif,
-      spNonAktif: hqSpNonAktif,
-      tataTertib: hqTataTertib,
-      nonTataTertib: hqNonTataTertib
-    },
+    spFilterYear: isAllSpYear ? 'ALL' : targetSpYear,
+    totalSpIssued: activeSummary.corporate.total,
+    corporateSp: activeSummary.corporate,
+    storeSp: activeSummary.store,
+    hqSp: activeSummary.hq,
+    allTimeSp: allTimeSummary,
+    byYear,
     disputes: {
       corporate: countDisputes(irCases),
       hq: countDisputes(irCases.filter(c => !c.storeId && !c.employee?.storeId)),

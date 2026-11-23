@@ -84,7 +84,8 @@ const getSummary = async (req, res) => {
     const filters = {
       year: req.query.year,
       month: req.query.month,
-      scope: req.query.scope
+      scope: req.query.scope,
+      spYear: req.query.spYear
     };
 
     // 1. Ambil data utuh dari service
