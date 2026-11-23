@@ -56,7 +56,8 @@ const getMonthlySnapshots = async (periodId, year) => {
     include: includeRel
   });
 
-  return snapshots.filter(s => s.employee && s.employee.gender !== null);
+  // Jangan buang karyawan yang gender-nya null agar konsisten dengan headcountTrajectory
+  return snapshots.filter(s => Boolean(s.employee));
 };
 
 const getLatestPeriodByYear = async (year) => {

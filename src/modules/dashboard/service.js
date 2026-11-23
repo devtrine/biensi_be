@@ -69,15 +69,20 @@ const EXACT_LEVEL_MAP = {
   'ASST MAN': 'Asst Man',
   'ASST. MAN': 'Asst Man',
   'ASST MANAGER': 'Asst Man',
+  'ASISTEN MANAGER': 'Asst Man',
   'HEAD': 'Head',
   'ASHEAD': 'Asst Head',
   'ASST HEAD': 'Asst Head',
+  'ASST. HEAD': 'Asst Head',
+  'ASISTEN HEAD': 'Asst Head',
   'LEADER': 'Leader',
   'STAFF': 'Staff',
+  'INTERN': 'Staff',
   'OPR': 'Operator',
   'OPERATOR': 'Operator',
   'PERBANTUAN': 'Operator',
   'BORONGAN': 'Operator',
+  'MITRA': 'Operator',
   'STORE LEADER': 'Store Leader',
   'ASST STORE LEADER': 'Asst Store Leader',
   'ASST SL': 'Asst Store Leader',
@@ -329,7 +334,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     else byGender.PEREMPUAN++;
 
     // Poin 3: Usia (7 Kategori)
-    let ageVal = null;
+  let ageVal = null;
     if (emp.birthDate) {
       ageVal = periodYear - new Date(emp.birthDate).getFullYear();
       if (ageVal > 0) {
@@ -339,7 +344,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
         else if (ageVal <= 25) byAgeBracket.age21To25++;
         else if (ageVal <= 30) byAgeBracket.age26To30++;
         else if (ageVal <= 40) byAgeBracket.age31To40++;
-        else if (ageVal <= 50) byAgeBracket.age40To50++;
+        else if (ageVal < 50) byAgeBracket.age40To50++;
         else if (ageVal <= 60) byAgeBracket.age50To60++;
         else byAgeBracket.over60++;
       }

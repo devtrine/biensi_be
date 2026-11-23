@@ -268,8 +268,16 @@ const processExcelImport = async (filePath, originalFilename = '') => {
   };
 
   const formattedData = rawExcelData.map(row => {
-    const isBpjsKesehatanValid = parseBpjsStatus(getValue(row, 'bpjskesehatan'));
-    const isBpjsKetenagakerjaanValid = parseBpjsStatus(getValue(row, 'bpjsketenagakerjaan'));
+    const isBpjsKesehatanValid = parseBpjsStatus(
+          getValue(row, 'bpjskesehatan') ??
+          getValue(row, 'statuskeanggotaanbpjskesehatan') ??
+          getValue(row, 'satuskeanggotaanbpjskesehatan')
+        );
+        const isBpjsKetenagakerjaanValid = parseBpjsStatus(
+          getValue(row, 'bpjsketenagakerjaan') ??
+          getValue(row, 'statuskeanggotaanbpjsketenagakerjaan') ??
+          getValue(row, 'satuskeanggotaanbpjsketenagakerjaan')
+        );
 
     // Baca kolom Bulan, Tahun, atau Periode dari baris Excel
     const rawBulan = getValue(row, 'bulan') ?? getValue(row, 'month') ?? getValue(row, 'periode') ?? getValue(row, 'period') ?? getValue(row, 'bulantahun') ?? getValue(row, 'cutoff') ?? getValue(row, 'tanggal');
