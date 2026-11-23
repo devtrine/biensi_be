@@ -12,6 +12,7 @@ const REDACTION_MAP = {
     'summary.productivity.costByDivision',
     'summary.productivity.costByDepartment',
     'summary.productivity.costByEmploymentType',
+    'summary.scopeBreakdown.*.budgetBreakdown',
     'summary.scopeBreakdown.*.productivity.budgetCost',
     'summary.scopeBreakdown.*.productivity.actualCost',
     'summary.scopeBreakdown.*.productivity.labourCostRatio',
@@ -29,7 +30,9 @@ const REDACTION_MAP = {
     'industrialAndSp.storeSp',
     'industrialAndSp.hqSp',
     'industrialAndSp.corporateSp',
-    'industrialAndSp.totalSpIssued'
+    'industrialAndSp.totalSpIssued',
+    'industrialAndSp.allTimeSp',
+    'industrialAndSp.byYear'
   ],
   attendance: [
     'summary.attendance',
