@@ -254,15 +254,37 @@ const classifyEmployeeLevel = (emp, item = null) => {
 };
 
 // Helper untuk mengelompokkan populasi karyawan (dipakai oleh Corporate, HQ, dan Store)
-const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0) => {
+const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0, prevDecList = []) => {
   const refDate = new Date(Date.UTC(periodYear, periodMonth, 0));
   let totalAge = 0; let validAgeCount = 0;
   let totalTenure = 0; let validTenureCount = 0;
-  let budgetCost = 0; let actualCost = 0;
+  let fallbackBudgetCost = 0; let actualCost = 0;
+
+  // Hitung baseline Budget dari snapshot Desember tahun sebelumnya (All & per kategori)
+  let prevDecBudgetTotal = 0;
+  const prevBudgetByDivision = {};
+  const prevBudgetByDepartment = {};
+  const prevBudgetByEmploymentType = {};
+
+  prevDecList.forEach(item => {
+    const emp = item.employee || item;
+    if (!emp) return;
+    const cost = parseFloat(item.budgetLabourCost || item.actualLabourCost || emp.baseSalary || 0);
+    const divName = item.division?.name || emp.division?.name || 'Uncategorized';
+    const deptName = item.department?.name || emp.department?.name || 'Uncategorized';
+    const empType = item.employmentType || emp.employmentType || 'Unknown';
+
+    prevDecBudgetTotal += cost;
+    prevBudgetByDivision[divName] = (prevBudgetByDivision[divName] || 0) + cost;
+    prevBudgetByDepartment[deptName] = (prevBudgetByDepartment[deptName] || 0) + cost;
+    prevBudgetByEmploymentType[empType] = (prevBudgetByEmploymentType[empType] || 0) + cost;
+  });
+
+  const hasPrevDecBudget = prevDecList.length > 0 && prevDecBudgetTotal > 0;
 
   const byGender = { LAKI_LAKI: 0, PEREMPUAN: 0 };
 
-  // Poin 3: 7 Rentang Usia (<21, 21-25, 26-30, 31-40, 40-50, 50-60, >60)
+  // Poin 3: 7 Rentang Usia (<21, 21-25, 26-30, 31-40, 41-49, 50-60, >60)
   const byAgeBracket = {
     under21: 0,
     age21To25: 0,
@@ -326,7 +348,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
 
     const bud = parseFloat(item.budgetLabourCost || emp.baseSalary || 0);
     const act = parseFloat(item.actualLabourCost || bud || 0);
-    budgetCost += bud;
+    fallbackBudgetCost += bud;
     actualCost += act;
 
     // Poin 2: Gender
@@ -334,7 +356,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
     else byGender.PEREMPUAN++;
 
     // Poin 3: Usia (7 Kategori)
-  let ageVal = null;
+    let ageVal = null;
     if (emp.birthDate) {
       ageVal = periodYear - new Date(emp.birthDate).getFullYear();
       if (ageVal > 0) {
@@ -415,6 +437,7 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
 
   const headcount = empList.length;
   const leaderTotal = posGroupAcc.leader.count + posGroupAcc.management.count;
+  const finalBudgetCost = hasPrevDecBudget ? prevDecBudgetTotal : fallbackBudgetCost;
 
   const byEmployeeLevel = STANDARD_LEVEL_ORDER.map(level => ({
     level,
@@ -480,8 +503,15 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
         avgTenure: posGroupAcc.management.tenCnt ? Number((posGroupAcc.management.tenSum / posGroupAcc.management.tenCnt).toFixed(1)) : 0
       }
     },
+    budgetBreakdown: {
+      source: hasPrevDecBudget ? `Desember ${periodYear - 1}` : 'Periode Berjalan (Fallback)',
+      total: finalBudgetCost,
+      byDivision: prevBudgetByDivision,
+      byDepartment: prevBudgetByDepartment,
+      byEmploymentType: prevBudgetByEmploymentType
+    },
     productivity: {
-      budgetCost,
+      budgetCost: finalBudgetCost,
       actualCost,
       labourCostRatio: totalSales > 0 ? ((actualCost / totalSales) * 100).toFixed(2) + '%' : '0%',
       revenuePerFte: headcount > 0 ? Math.round(totalSales / headcount) : 0,
@@ -495,40 +525,41 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
   const period = await prisma.reportingPeriod.findUnique({ where: { id: periodId } });
   if (!period) throw new Error('Periode tidak ditemukan');
 
-  const [rawSnapshots, attendance, attendanceByScope, sales] = await Promise.all([
-    repository.getMonthlySnapshots(periodId, period.year),
-    repository.getAttendanceByPeriod(periodId, scope, period.year),
-    repository.getAttendanceBothScopes(periodId, period.year),
-    repository.getSalesByPeriod(periodId, period.year)
-  ]);
+  const prevDecPeriod = await prisma.reportingPeriod.findFirst({
+      where: { year: period.year - 1, month: 12 }
+    });
 
-  const totalSales = sales.reduce((sum, s) => sum + parseFloat(s.netSales || 0), 0);
+    const [rawSnapshots, prevDecRawSnapshots, attendance, attendanceByScope, sales] = await Promise.all([
+      repository.getMonthlySnapshots(periodId, period.year),
+      prevDecPeriod ? repository.getMonthlySnapshots(prevDecPeriod.id, period.year - 1) : Promise.resolve([]),
+      repository.getAttendanceByPeriod(periodId, scope, period.year),
+      repository.getAttendanceBothScopes(periodId, period.year),
+      repository.getSalesByPeriod(periodId, period.year)
+    ]);
 
-  // Filter Snapshot sesuai Scope untuk Charts (gunakan storeId snapshot agar data historis tidak bergeser karena mutasi periode lain)
-  const normScope = String(scope || 'CORPORATE').toUpperCase();
-  const isStoreSnapshot = (s) => (s.storeId !== undefined ? s.storeId !== null : s.employee?.storeId !== null);
+    // Filter scope yang sama untuk rawSnapshots maupun prevDecRawSnapshots
+    const filterByScope = (list) => list.filter(snap => {
+      if (!snap.employee) return false;
+      if (normScope.includes('HQ') || normScope.includes('PUSAT') || normScope === 'HO') return !isStoreSnapshot(snap);
+      if (normScope.includes('STORE') || normScope.includes('RITEL') || normScope === 'TOKO') return isStoreSnapshot(snap);
+      return true;
+    });
 
-  const snapshots = rawSnapshots.filter(snap => {
-    if (!snap.employee) return false;
-    if (normScope.includes('HQ') || normScope.includes('PUSAT') || normScope === 'HO') {
-      return !isStoreSnapshot(snap);
-    }
-    if (normScope.includes('STORE') || normScope.includes('RITEL') || normScope.includes('TOKO')) {
-      return isStoreSnapshot(snap);
-    }
-    return true;
-  });
+    const snapshots = filterByScope(rawSnapshots);
+    const prevDecSnapshots = filterByScope(prevDecRawSnapshots);
 
-  // Untuk filter hq dan store
-  const hqSnapshots = rawSnapshots.filter(s => s.employee && !isStoreSnapshot(s));
-  const storeSnapshots = rawSnapshots.filter(s => s.employee && isStoreSnapshot(s));
-  const activeScopeStats = summarizeEmployeeGroup(snapshots, period.year, period.month, totalSales);
+    const hqSnapshots = rawSnapshots.filter(s => s.employee && !isStoreSnapshot(s));
+    const storeSnapshots = rawSnapshots.filter(s => s.employee && isStoreSnapshot(s));
+    const prevHqSnapshots = prevDecRawSnapshots.filter(s => s.employee && !isStoreSnapshot(s));
+    const prevStoreSnapshots = prevDecRawSnapshots.filter(s => s.employee && isStoreSnapshot(s));
 
-  const scopeBreakdown = {
-    corporate: summarizeEmployeeGroup(rawSnapshots, period.year, period.month, totalSales),
-    hq: summarizeEmployeeGroup(hqSnapshots, period.year, period.month, totalSales),
-    store: summarizeEmployeeGroup(storeSnapshots, period.year, period.month, totalSales)
-  };
+    const activeScopeStats = summarizeEmployeeGroup(snapshots, period.year, period.month, totalSales, prevDecSnapshots);
+
+    const scopeBreakdown = {
+      corporate: summarizeEmployeeGroup(rawSnapshots, period.year, period.month, totalSales, prevDecRawSnapshots),
+      hq: summarizeEmployeeGroup(hqSnapshots, period.year, period.month, totalSales, prevHqSnapshots),
+      store: summarizeEmployeeGroup(storeSnapshots, period.year, period.month, totalSales, prevStoreSnapshots)
+    };
 
   // Proses Demografi & Grouping Biaya
   let totalAge = 0;
@@ -607,6 +638,35 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
     costDistribution.byEmploymentType[status].budgetCost += budget;
     costDistribution.byEmploymentType[status].actualCost += actual;
   });
+
+  const hasPrevDec = prevDecSnapshots.length > 0 && activeScopeStats.budgetBreakdown.total > 0;
+  if (hasPrevDec) {
+    totalBudget = activeScopeStats.budgetBreakdown.total;
+
+    Object.entries(activeScopeStats.budgetBreakdown.byDivision).forEach(([divName, budVal]) => {
+      if (!costDistribution.byDivision[divName]) {
+        costDistribution.byDivision[divName] = { headcount: 0, budgetCost: budVal, actualCost: 0 };
+      } else {
+        costDistribution.byDivision[divName].budgetCost = budVal;
+      }
+    });
+
+    Object.entries(activeScopeStats.budgetBreakdown.byDepartment).forEach(([deptName, budVal]) => {
+      if (!costDistribution.byDepartment[deptName]) {
+        costDistribution.byDepartment[deptName] = { headcount: 0, budgetCost: budVal, actualCost: 0, parentDivision: null };
+      } else {
+        costDistribution.byDepartment[deptName].budgetCost = budVal;
+      }
+    });
+
+    Object.entries(activeScopeStats.budgetBreakdown.byEmploymentType).forEach(([empType, budVal]) => {
+      if (!costDistribution.byEmploymentType[empType]) {
+        costDistribution.byEmploymentType[empType] = { headcount: 0, budgetCost: budVal, actualCost: 0 };
+      } else {
+        costDistribution.byEmploymentType[empType].budgetCost = budVal;
+      }
+    });
+  }
 
   const avgAge = validAgeCount ? (totalAge / validAgeCount).toFixed(1) : 0;
 
