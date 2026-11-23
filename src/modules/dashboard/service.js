@@ -526,40 +526,46 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
   if (!period) throw new Error('Periode tidak ditemukan');
 
   const prevDecPeriod = await prisma.reportingPeriod.findFirst({
-      where: { year: period.year - 1, month: 12 }
-    });
+    where: { year: period.year - 1, month: 12 }
+  });
 
-    const [rawSnapshots, prevDecRawSnapshots, attendance, attendanceByScope, sales] = await Promise.all([
-      repository.getMonthlySnapshots(periodId, period.year),
-      prevDecPeriod ? repository.getMonthlySnapshots(prevDecPeriod.id, period.year - 1) : Promise.resolve([]),
-      repository.getAttendanceByPeriod(periodId, scope, period.year),
-      repository.getAttendanceBothScopes(periodId, period.year),
-      repository.getSalesByPeriod(periodId, period.year)
-    ]);
+  const [rawSnapshots, prevDecRawSnapshots, attendance, attendanceByScope, sales] = await Promise.all([
+    repository.getMonthlySnapshots(periodId, period.year),
+    prevDecPeriod ? repository.getMonthlySnapshots(prevDecPeriod.id, period.year - 1) : Promise.resolve([]),
+    repository.getAttendanceByPeriod(periodId, scope, period.year),
+    repository.getAttendanceBothScopes(periodId, period.year),
+    repository.getSalesByPeriod(periodId, period.year)
+  ]);
 
-    // Filter scope yang sama untuk rawSnapshots maupun prevDecRawSnapshots
-    const filterByScope = (list) => list.filter(snap => {
-      if (!snap.employee) return false;
-      if (normScope.includes('HQ') || normScope.includes('PUSAT') || normScope === 'HO') return !isStoreSnapshot(snap);
-      if (normScope.includes('STORE') || normScope.includes('RITEL') || normScope === 'TOKO') return isStoreSnapshot(snap);
-      return true;
-    });
+  const totalSales = sales.reduce((sum, s) => sum + parseFloat(s.netSales || 0), 0);
 
-    const snapshots = filterByScope(rawSnapshots);
-    const prevDecSnapshots = filterByScope(prevDecRawSnapshots);
+  // Filter Snapshot sesuai Scope untuk Charts (gunakan storeId snapshot agar data historis tidak bergeser karena mutasi periode lain)
+  const normScope = String(scope || 'CORPORATE').toUpperCase();
+  const isStoreSnapshot = (s) => (s.storeId !== undefined ? s.storeId !== null : s.employee?.storeId !== null);
 
-    const hqSnapshots = rawSnapshots.filter(s => s.employee && !isStoreSnapshot(s));
-    const storeSnapshots = rawSnapshots.filter(s => s.employee && isStoreSnapshot(s));
-    const prevHqSnapshots = prevDecRawSnapshots.filter(s => s.employee && !isStoreSnapshot(s));
-    const prevStoreSnapshots = prevDecRawSnapshots.filter(s => s.employee && isStoreSnapshot(s));
+  // Filter scope yang sama untuk rawSnapshots maupun prevDecRawSnapshots
+  const filterByScope = (list) => list.filter(snap => {
+    if (!snap.employee) return false;
+    if (normScope.includes('HQ') || normScope.includes('PUSAT') || normScope === 'HO') return !isStoreSnapshot(snap);
+    if (normScope.includes('STORE') || normScope.includes('RITEL') || normScope === 'TOKO') return isStoreSnapshot(snap);
+    return true;
+  });
 
-    const activeScopeStats = summarizeEmployeeGroup(snapshots, period.year, period.month, totalSales, prevDecSnapshots);
+  const snapshots = filterByScope(rawSnapshots);
+  const prevDecSnapshots = filterByScope(prevDecRawSnapshots);
 
-    const scopeBreakdown = {
-      corporate: summarizeEmployeeGroup(rawSnapshots, period.year, period.month, totalSales, prevDecRawSnapshots),
-      hq: summarizeEmployeeGroup(hqSnapshots, period.year, period.month, totalSales, prevHqSnapshots),
-      store: summarizeEmployeeGroup(storeSnapshots, period.year, period.month, totalSales, prevStoreSnapshots)
-    };
+  const hqSnapshots = rawSnapshots.filter(s => s.employee && !isStoreSnapshot(s));
+  const storeSnapshots = rawSnapshots.filter(s => s.employee && isStoreSnapshot(s));
+  const prevHqSnapshots = prevDecRawSnapshots.filter(s => s.employee && !isStoreSnapshot(s));
+  const prevStoreSnapshots = prevDecRawSnapshots.filter(s => s.employee && isStoreSnapshot(s));
+
+  const activeScopeStats = summarizeEmployeeGroup(snapshots, period.year, period.month, totalSales, prevDecSnapshots);
+
+  const scopeBreakdown = {
+    corporate: summarizeEmployeeGroup(rawSnapshots, period.year, period.month, totalSales, prevDecRawSnapshots),
+    hq: summarizeEmployeeGroup(hqSnapshots, period.year, period.month, totalSales, prevHqSnapshots),
+    store: summarizeEmployeeGroup(storeSnapshots, period.year, period.month, totalSales, prevStoreSnapshots)
+  };
 
   // Proses Demografi & Grouping Biaya
   let totalAge = 0;
@@ -642,6 +648,9 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
   const hasPrevDec = prevDecSnapshots.length > 0 && activeScopeStats.budgetBreakdown.total > 0;
   if (hasPrevDec) {
     totalBudget = activeScopeStats.budgetBreakdown.total;
+    Object.values(costDistribution.byDivision).forEach(v => { v.budgetCost = 0; });
+    Object.values(costDistribution.byDepartment).forEach(v => { v.budgetCost = 0; });
+    Object.values(costDistribution.byEmploymentType).forEach(v => { v.budgetCost = 0; });
 
     Object.entries(activeScopeStats.budgetBreakdown.byDivision).forEach(([divName, budVal]) => {
       if (!costDistribution.byDivision[divName]) {
