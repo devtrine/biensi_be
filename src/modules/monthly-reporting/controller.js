@@ -1,4 +1,5 @@
 const service = require('./service');
+const { runDryRunOrGuard } = require('../../utils/importValidator');
 const xlsx = require('xlsx');
 const fs = require('fs');
 const { success } = require('zod');
@@ -210,6 +211,10 @@ const getStorePerformanceByPeriod = async (req, res) => {
 const uploadAttendanceUniversal = async (req, res) => {
   try {
     if (!req.file) throw new Error("File Excel wajib diunggah!");
+
+    const guard = await runDryRunOrGuard(req, res, 'attendance');
+    if (guard.handled) return;
+
     const workbook = xlsx.readFile(req.file.path);
     
     // Cari semua sheet kehadiran (misal: kehadiran2026, kehadiran2025, kehadiran2024, dll)
@@ -266,6 +271,10 @@ const uploadAttendanceUniversal = async (req, res) => {
 const uploadSalesUniversal = async (req, res) => {
   try {
     if (!req.file) throw new Error("File Excel wajib diunggah!");
+
+    const guard = await runDryRunOrGuard(req, res, 'sales');
+    if (guard.handled) return;
+
     const data = await service.importSalesUniversal(req.file.path);
     res.status(201).json({ success: true, message: `Berhasil memproses ${data.imported} data sales toko!` });
   } catch (error) {

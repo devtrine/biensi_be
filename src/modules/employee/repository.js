@@ -171,6 +171,7 @@ const processBulkImport = async (rawData) => {
       // [FIX] 2. Antisipasi NIK Ganda antara HO dan Toko 
       const existingEmp = await prisma.employee.findUnique({ where: { employeeNo: empNo } });
       const isDifferentScope = existingEmp && (Boolean(storeName) !== (existingEmp.storeId !== null));
+      const isDummyName = ['UJI', 'COBA', 'TEST'].includes(fullName) || fullName.startsWith('KARYAWAN ');
       if (isDifferentScope && (existingEmp.fullName.toUpperCase() !== fullName || isDummyName)) {
         if (storeName) {
           // Baris baru orang Toko & bentrok dengan HO -> beri sufiks -STR agar tidak menimpa HO

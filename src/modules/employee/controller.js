@@ -1,5 +1,6 @@
 const service = require('./service');
 const importService = require('./import');
+const { runDryRunOrGuard } = require('../../utils/importValidator');
 const fs = require('fs');
 
 const getEmployees = async (req, res) => {
@@ -41,6 +42,9 @@ const importEmployees = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "File Excel tidak ditemukan" });
     }
+
+    const guard = await runDryRunOrGuard(req, res, 'employees');
+    if (guard.handled) return;
 
     const result = await importService.processExcelImport(req.file.path, req.file.originalname);
 

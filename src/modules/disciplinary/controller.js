@@ -1,6 +1,13 @@
 const { getDashboardData } = require('./repository');
 const service = require('./service');
+const { runDryRunOrGuard } = require('../../utils/importValidator');
 const fs = require('fs');
+
+const cleanupTempFile = (req) => {
+  if (req.file && fs.existsSync(req.file.path)) {
+    try { fs.unlinkSync(req.file.path); } catch (e) {}
+  }
+};
 
 // === 1. IMPORT BULK SP (TOKO & HO) ===
 const importBulkSP = async (req, res) => {
@@ -9,6 +16,9 @@ const importBulkSP = async (req, res) => {
       return res.status(400).json({ success: false, message: "File Excel tidak ditemukan. Gunakan form-data dengan key 'file'." });
     }
 
+    const guard = await runDryRunOrGuard(req, res, 'sp');
+    if (guard.handled) return;
+
     const result = await service.importBulkSP(req.file.path);
     res.status(200).json({
       success: true,
@@ -16,8 +26,9 @@ const importBulkSP = async (req, res) => {
       errors: result.errors
     });
   } catch (error) {
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); // Hapus file jika terjadi error
     res.status(500).json({ success: false, message: error.message });
+  } finally {
+    cleanupTempFile(req);
   }
 };
 
@@ -28,6 +39,9 @@ const importBulkFraud = async (req, res) => {
       return res.status(400).json({ success: false, message: "File Excel tidak ditemukan. Gunakan form-data dengan key 'file'." });
     }
 
+    const guard = await runDryRunOrGuard(req, res, 'fraud');
+    if (guard.handled) return;
+
     const result = await service.importBulkFraud(req.file.path);
     res.status(200).json({
       success: true,
@@ -35,8 +49,9 @@ const importBulkFraud = async (req, res) => {
       errors: result.errors
     });
   } catch (error) {
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ success: false, message: error.message });
+  } finally {
+    cleanupTempFile(req);
   }
 };
 
@@ -45,6 +60,10 @@ const importBulkBipartit = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "File Excel Bipartit tidak ditemukan." });
     }
+
+    const guard = await runDryRunOrGuard(req, res, 'bipartit');
+    if (guard.handled) return;
+
     const result = await service.importBulkBipartit(req.file.path);
     res.status(200).json({
       success: true,
@@ -52,8 +71,9 @@ const importBulkBipartit = async (req, res) => {
       errors: result.errors
     });
   } catch (error) {
-    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ success: false, message: error.message });
+  } finally {
+    cleanupTempFile(req);
   }
 };
 
@@ -62,6 +82,10 @@ const importSpTokoRekap = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'File Excel wajib diunggah.' });
     }
+
+    const guard = await runDryRunOrGuard(req, res, 'sp-rekap');
+    if (guard.handled) return;
+
     const result = await service.importSpTokoRekap(req.file.path);
     return res.status(200).json({
       success: true,
@@ -70,6 +94,8 @@ const importSpTokoRekap = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    cleanupTempFile(req);
   }
 };
 
