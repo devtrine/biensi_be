@@ -127,7 +127,7 @@ const parseStrictDate = (val, allowMonthOnlyYear = null) => {
   return { valid: true, date: new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 12, 0, 0)) };
 };
 
-const parseStrictNumber = (val, { allowNegative = true } = {}) => {
+const parseStrictNumber = (val, { allowNegative = true, zeroTokens = [] } = {}) => {
   if (val === undefined || val === null || val === '') return { valid: true, num: null };
   if (isFormulaError(val)) return { valid: false, raw: String(val) };
   if (typeof val === 'number') {
@@ -136,7 +136,11 @@ const parseStrictNumber = (val, { allowNegative = true } = {}) => {
   }
   const s = String(val).replace(/\u00A0/g, ' ').trim();
   if (!s || s === '-') return { valid: true, num: null };
+  if (zeroTokens.length > 0 && zeroTokens.includes(s.toUpperCase())) {
+    return { valid: true, num: 0 };
+  }
   const cleaned = s.replace(/^rp\.?\s*/i, '').replace(/%/g, '').replace(/\s+/g, '');
+  if (!cleaned || cleaned === '-') return { valid: true, num: 0 };
   if (!/^-?[\d.,]+$/.test(cleaned)) return { valid: false, raw: s };
   // Tangani pemisah ribuan/desimal umum
   const normalized = cleaned.includes(',') && !cleaned.includes('.')
@@ -265,12 +269,20 @@ const parseAttendanceMonthYear = (monthStr) => {
   if (!monthStr) return null;
   const str = String(monthStr).toUpperCase().trim();
   const months = {
-    JAN: 1, JANUARI: 1, FEB: 2, FEBRUARI: 2, MAR: 3, MARET: 3,
-    APR: 4, APRIL: 4, MEI: 5, MAY: 5, JUN: 6, JUNI: 6,
-    JUL: 7, JULI: 7, AGU: 8, AGUSTUS: 8, SEP: 9, SEPTEMBER: 9,
-    OKT: 10, OKTOBER: 10, NOV: 11, NOVEMBER: 11, DES: 12, DESEMBER: 12
+    JAN: 1, JANUARI: 1, JANUARY: 1,
+    FEB: 2, PEB: 2, FEBRUARI: 2, FEBRUARY: 2,
+    MAR: 3, MARET: 3, MARCH: 3,
+    APR: 4, APRIL: 4,
+    MEI: 5, MAY: 5,
+    JUN: 6, JUNI: 6, JUNE: 6,
+    JUL: 7, JULI: 7, JULY: 7,
+    AGU: 8, AGT: 8, AGUST: 8, AGUSTUS: 8, AUG: 8, AUGUST: 8,
+    SEP: 9, SEPT: 9, SEPTEMBER: 9,
+    OKT: 10, OKTOBER: 10, OCT: 10, OCTOBER: 10,
+    NOV: 11, NOP: 11, NOVEMBER: 11,
+    DES: 12, DESEMBER: 12, DEC: 12, DECEMBER: 12
   };
-  const parts = str.split(/\s+/);
+  const parts = str.split(/[\s/\\-]+/).filter(Boolean);
   if (parts.length < 2) return null;
   const monthName = parts[parts.length - 2].replace(/[^A-Z]/g, '');
   const year = parseInt(parts[parts.length - 1], 10);
@@ -423,9 +435,10 @@ const validateEmployees = async (workbook, fileName) => {
       const empNoClean = String(rawEmpNo || '').trim().replace(/^['"`\s]+/, '').toUpperCase();
       const nameClean = cleanStr(rawName);
 
-      // Lewati baris kosong total atau footer ringkasan
+      // Lewati baris kosong total atau footer ringkasan / baris penomoran indeks
       if (!empNoClean && !nameClean) return;
-      if (['TOTAL', 'SUM', '1'].includes(empNoClean) && (!nameClean || nameClean.toUpperCase() === 'TOTAL')) return;
+      if (['TOTAL', 'SUM', 'SUBTOTAL', 'RATA-RATA', '1'].includes(empNoClean) && (!nameClean || nameClean.toUpperCase() === 'TOTAL' || /^\d+$/.test(nameClean))) return;
+      if (/^\d+$/.test(empNoClean) && /^\d+$/.test(nameClean || '')) return;
 
       totalDataRows++;
       const label = `Sheet '${sheetName}' Baris ${rowNum}`;
@@ -491,6 +504,11 @@ const validateEmployees = async (workbook, fileName) => {
 
       const store = cleanStoreName(getRowVal(row, 'namatoko', 'store', 'storename', 'showroom', 'toko'));
       const scopeTag = store ? 'STORE' : 'HO';
+      const posName = (cleanStr(getRowVal(row, 'jabatan', 'posisi', 'position')) || '').toUpperCase();
+      const levelName = (cleanStr(getRowVal(row, 'leveljabatan', 'employeelevel', 'level')) || 'STAFF').toUpperCase();
+      const divName = (cleanStr(getRowVal(row, 'divisinewsyfa', 'divisinew', 'divisi', 'division')) || '').toUpperCase();
+      const deptName = (cleanStr(getRowVal(row, 'departemennewbyhrbp', 'departemen', 'department')) || '').toUpperCase();
+      const salaryNum = salRes.valid && salRes.num !== null ? Math.round(salRes.num) : null;
 
       parsedRows.push({
         label,
@@ -498,6 +516,12 @@ const validateEmployees = async (workbook, fileName) => {
         rowNum,
         empNo: empNoClean,
         fullName: (nameClean || '').toUpperCase(),
+        posName,
+        levelName,
+        divName,
+        deptName,
+        store: store || '',
+        salaryNum,
         scopeTag,
         year: periodRes.year,
         month: periodRes.month,
@@ -519,7 +543,7 @@ const validateEmployees = async (workbook, fileName) => {
     }
   }
 
-  // Cek duplikat terhadap database (snapshot periode + employee sudah ada di DB)
+  // Cek duplikat terhadap database (snapshot periode + employee identik sudah ada di DB)
   if (parsedRows.length > 0) {
     const periodPairs = Array.from(new Set(parsedRows.map(r => `${r.year}-${r.month}`))).map(s => {
       const [y, m] = s.split('-').map(Number);
@@ -540,25 +564,57 @@ const validateEmployees = async (workbook, fileName) => {
         select: {
           periodId: true,
           storeId: true,
+          employeeLevel: true,
+          budgetLabourCost: true,
+          position: { select: { name: true, employeeLevel: true } },
+          division: { select: { name: true } },
+          department: { select: { name: true } },
+          store: { select: { storeName: true } },
           employee: { select: { employeeNo: true, fullName: true } }
         }
       });
 
-      const snapLookup = new Set();
+      const snapLookup = new Map();
       for (const s of existingSnaps) {
         const no = s.employee.employeeNo.toUpperCase();
         const baseNo = no.replace(/-(STR|HO)$/, '');
         const sc = s.storeId !== null ? 'STORE' : 'HO';
-        snapLookup.add(`${s.periodId}|${no}|${sc}`);
-        snapLookup.add(`${s.periodId}|${baseNo}|${sc}`);
+        snapLookup.set(`${s.periodId}|${no}|${sc}`, s);
+        snapLookup.set(`${s.periodId}|${baseNo}|${sc}`, s);
       }
 
+      const matchedDbItems = [];
       for (const r of parsedRows) {
         const pId = periodIdByKey.get(r.periodKey);
         if (!pId) continue;
-        if (snapLookup.has(`${pId}|${r.empNo}|${r.scopeTag}`)) {
-          dbDuplicates.push(`${r.label} (NIK: ${r.empNo}, Nama: ${r.fullName}, Periode: ${r.periodKey}): Data karyawan periode ini sudah ada di database.`);
-          invalidRowLabels.add(r.label);
+        const existing = snapLookup.get(`${pId}|${r.empNo}|${r.scopeTag}`);
+        if (!existing) continue;
+
+        const dbName = (existing.employee?.fullName || '').trim().toUpperCase();
+        const dbPos = (existing.position?.name || '').trim().toUpperCase();
+        const dbLevel = (existing.employeeLevel || existing.position?.employeeLevel || 'STAFF').trim().toUpperCase();
+        const dbSalary = existing.budgetLabourCost !== null && existing.budgetLabourCost !== undefined
+          ? Math.round(Number(existing.budgetLabourCost))
+          : null;
+
+        const isSameName = dbName === r.fullName;
+        const isSamePos = !r.posName || dbPos === r.posName;
+        const isSameLevel = !r.levelName || dbLevel === r.levelName;
+        const isSameSalary = r.salaryNum === null || dbSalary === r.salaryNum;
+
+        if (isSameName && isSamePos && isSameLevel && isSameSalary) {
+          matchedDbItems.push({
+            label: r.label,
+            msg: `${r.label} (NIK: ${r.empNo}, Nama: ${r.fullName}, Periode: ${r.periodKey}): Data karyawan periode ini sudah ada di database.`
+          });
+        }
+      }
+
+      // Blokir sebagai duplikat DB jika seluruh baris valid di file memang sudah ada identik di database
+      if (matchedDbItems.length === parsedRows.length) {
+        for (const item of matchedDbItems) {
+          dbDuplicates.push(item.msg);
+          invalidRowLabels.add(item.label);
         }
       }
     }
@@ -595,7 +651,7 @@ const validateMovement = async (workbook, fileName) => {
   if (targetSheets.length === 0) {
     targetSheets = workbook.SheetNames.filter(n => {
       const l = n.toLowerCase();
-      return !['demografi', 'kehadiran', 'sales', 'wlkp', 'kasus', 'fraud', 'sp', 'phase', 'critical', 'visual'].some(k => l.includes(k));
+      return !['demografi', 'karyawan', 'pegawai', 'kehadiran', 'absensi', 'sales', 'wlkp', 'kasus', 'fraud', 'sp', 'phase', 'critical', 'visual', 'panduan'].some(k => l.includes(k));
     });
   }
   if (targetSheets.length === 0) targetSheets = [workbook.SheetNames[0]];
@@ -623,7 +679,13 @@ const validateMovement = async (workbook, fileName) => {
     const h1 = matrix[headerRowIdx] || [];
     const h2 = matrix[headerRowIdx + 1] || [];
     const combinedH = (h1.join('') + h2.join('')).toUpperCase().replace(/\s+/g, '');
-    const hasMoveDateHeader = combinedH.includes('RESIGN') || combinedH.includes('HABISKONTRAK') || combinedH.includes('KELUAR');
+    const isDemografiSheet = combinedH.includes('TANGGALLAHIR') || combinedH.includes('TGLLAHIR') || combinedH.includes('PENDIDIKANTERAKHIR');
+    const hasMoveDateHeader = !isDemografiSheet && (
+      combinedH.includes('RESIGN') ||
+      combinedH.includes('KELUAR') ||
+      combinedH.includes('TURNOVER') ||
+      (combinedH.includes('HABISKONTRAK') && (combinedH.includes('ALASAN') || combinedH.includes('KATEGORIPHK') || combinedH.includes('PHK')))
+    );
     if (!hasMoveDateHeader) {
       const hint = findHeaderTypoHint([...h1, ...h2], ['tanggalresignhabiskontrak', 'tglresignhabiskontrak', 'tanggalresign']);
       headerErrors.push(`Sheet '${sheetName}': Kolom tanggal keluar/resign tidak ditemukan${hint ? ` (kemungkinan typo pada "${hint}")` : ''}.`);
@@ -641,7 +703,7 @@ const validateMovement = async (workbook, fileName) => {
       const rawEmpNo = getRowVal(row, 'nikkaryawan', 'nik', 'employeeno');
       const empNoClean = rawEmpNo ? String(rawEmpNo).trim().toUpperCase() : null;
 
-      const rawMoveDate = getRowVal(row, 'tanggalresign/habiskontrak', 'tglresign/habiskontrak', 'tanggalresign', 'tglresign');
+      const rawMoveDate = getRowVal(row, 'tanggalresign/habiskontrak', 'tglresign/habiskontrak', 'tanggalresign', 'tglresign', 'tanggalkeluar', 'tglkeluar');
       const moveDateRes = parseStrictDate(rawMoveDate);
       if (!rawMoveDate || !moveDateRes.valid || !moveDateRes.date) {
         rowErrors.push(`${label} (${nameClean}): Tanggal Resign/Habis Kontrak kosong atau tidak valid ("${rawMoveDate || ''}").`);
@@ -669,6 +731,7 @@ const validateMovement = async (workbook, fileName) => {
         label,
         empNo: empNoClean,
         fullName: nameClean.toUpperCase(),
+        joinDateKey: isoDateKey(joinRes.date),
         dateKey: isoDateKey(moveDateRes.date),
         movementDate: moveDateRes.date
       });
@@ -677,7 +740,8 @@ const validateMovement = async (workbook, fileName) => {
 
   const seenFile = new Map();
   for (const r of parsedRows) {
-    const key = `${r.empNo || r.fullName}|${r.dateKey}`;
+    const identityKey = r.empNo || `${r.fullName}|${r.joinDateKey || ''}`;
+    const key = `${identityKey}|${r.dateKey}`;
     if (seenFile.has(key)) {
       fileDuplicates.push(`${r.label} (${r.fullName}, Tgl: ${r.dateKey}): Duplikat di dalam file dengan ${seenFile.get(key).label}.`);
     } else {
@@ -695,23 +759,45 @@ const validateMovement = async (workbook, fileName) => {
           { fullName: { in: names, mode: 'insensitive' } }
         ]
       },
-      select: { id: true, employeeNo: true, fullName: true }
+      select: { id: true, employeeNo: true, fullName: true, joinDate: true }
     });
 
     if (dbEmps.length > 0) {
       const empIdByNo = new Map(dbEmps.map(e => [e.employeeNo.toUpperCase(), e.id]));
-      const empIdByName = new Map(dbEmps.map(e => [e.fullName.toUpperCase(), e.id]));
+      const empIdsByName = new Map();
+      for (const e of dbEmps) {
+        const k = e.fullName.toUpperCase();
+        if (!empIdsByName.has(k)) empIdsByName.set(k, []);
+        empIdsByName.get(k).push(e);
+      }
+
       const existingMovs = await prisma.employeeMovement.findMany({
         where: { employeeId: { in: dbEmps.map(e => e.id) } },
         select: { employeeId: true, movementDate: true }
       });
       const movSet = new Set(existingMovs.map(m => `${m.employeeId}|${isoDateKey(m.movementDate)}`));
 
+      const matchedDbMsgs = [];
       for (const r of parsedRows) {
-        const eid = (r.empNo && empIdByNo.get(r.empNo)) || empIdByName.get(r.fullName);
-        if (eid && movSet.has(`${eid}|${r.dateKey}`)) {
-          dbDuplicates.push(`${r.label} (${r.fullName}, Tgl: ${r.dateKey}): Catatan turnover ini sudah ada di database.`);
+        let matched = false;
+        if (r.empNo && empIdByNo.has(r.empNo)) {
+          matched = movSet.has(`${empIdByNo.get(r.empNo)}|${r.dateKey}`);
+        } else if (empIdsByName.has(r.fullName)) {
+          const candidates = empIdsByName.get(r.fullName);
+          matched = candidates.some(c => {
+            if (!movSet.has(`${c.id}|${r.dateKey}`)) return false;
+            if (r.joinDateKey && c.joinDate) {
+              return isoDateKey(c.joinDate) === r.joinDateKey;
+            }
+            return true;
+          });
         }
+        if (matched) {
+          matchedDbMsgs.push(`${r.label} (${r.fullName}, Tgl: ${r.dateKey}): Catatan turnover ini sudah ada di database.`);
+        }
+      }
+      if (matchedDbMsgs.length === parsedRows.length) {
+        dbDuplicates.push(...matchedDbMsgs);
       }
     }
   }
@@ -734,7 +820,7 @@ const validateMovement = async (workbook, fileName) => {
 // =========================
 const COMPLIANCE_ALIASES = {
   entityName: ['PERUSAHAAN', 'ENTITAS', 'COMPANY', 'ENTITY'],
-  permitType: ['JENISPERIJINAN', 'JENISPERIZINAN', 'JENISDOKUMEN', 'PERMITTYPE', 'DOCUMENTTYPE', 'CATEGORY', 'JENIS'],
+  permitType: ['JENISPERIJINAN', 'JENISPERIZINAN', 'JENISDOKUMEN', 'PERMITTYPE', 'DOCUMENTTYPE'],
   storeName: ['NAMATOKO', 'STORENAME', 'SHOWROOM', 'CABANG', 'BRANCH', 'UNITKERJA'],
   documentName: ['DOKUMEN/PERIZINAN', 'DOKUMEN/PERIJINAN', 'NAMADOKUMEN', 'DOCUMENTNAME', 'INSTRUMEN', 'DOKUMEN', 'PERIZINAN'],
   location: ['LOKASI', 'LOCATION', 'WILAYAH', 'TEMPAT', 'SITE'],
@@ -767,7 +853,7 @@ const validateCompliance = async (workbook, fileName) => {
   if (targetSheets.length === 0) {
     targetSheets = workbook.SheetNames.filter(n => {
       const l = n.toLowerCase();
-      return !['demografi', 'turnover', 'kehadiran', 'sales', 'fraud', 'kasus', 'sp', 'phase', 'recruitment'].some(k => l.includes(k));
+      return !['demografi', 'karyawan', 'pegawai', 'turnover', 'kehadiran', 'absensi', 'sales', 'fraud', 'kasus', 'sp', 'phase', 'recruitment', 'critical', 'visual', 'panduan'].some(k => l.includes(k));
     });
   }
   if (targetSheets.length === 0) targetSheets = [workbook.SheetNames[0]];
@@ -796,7 +882,83 @@ const validateCompliance = async (workbook, fileName) => {
       }
     }
 
+    // Fallback: Format Matriks Toko (STORE NAME + PP / WLKP / GENSET) seperti pada HR_Monitoring_Dashboard v2.0.xlsx
     if (headerRow === -1) {
+      let matrixStoreCol = -1;
+      let matrixHeaderRow = -1;
+      const mCols = {};
+      for (let r = 0; r < Math.min(10, matrix.length); r++) {
+        const row = matrix[r] || [];
+        for (let c = 0; c < row.length; c++) {
+          const cell = String(row[c] || '').toUpperCase().replace(/\s+/g, '');
+          if (!cell) continue;
+          if ((cell.includes('STORENAME') || cell === 'NAMATOKO') && matrixStoreCol === -1) {
+            matrixStoreCol = c;
+            matrixHeaderRow = r;
+          }
+          if (cell.includes('PPTGLAWAL')) mCols.ppAwal = c;
+          else if (cell.includes('PPTGLAKHIR')) mCols.ppAkhir = c;
+          else if (cell.includes('WLKPTGLAWAL')) mCols.wlkpAwal = c;
+          else if (cell.includes('WLKPTGLAKHIR')) mCols.wlkpAkhir = c;
+          else if ((cell.includes('PERATURANPERUSAHAAN') || cell === 'PP') && mCols.ppFlag === undefined) mCols.ppFlag = c;
+          else if (cell === 'WLKP' && mCols.wlkpFlag === undefined) mCols.wlkpFlag = c;
+          else if (cell === 'PERIODE' && mCols.periodeAwal === undefined) { mCols.periodeAwal = c; mCols.periodeAkhir = c + 1; }
+          else if (cell === 'GENSET' && mCols.gensetFlag === undefined) { mCols.gensetFlag = c; mCols.gensetAwal = c + 1; }
+        }
+      }
+
+      const hasMatrixCompliance = mCols.ppAwal !== undefined || mCols.wlkpAwal !== undefined || mCols.ppFlag !== undefined || mCols.wlkpFlag !== undefined;
+      if (matrixStoreCol !== -1 && hasMatrixCompliance) {
+        for (let r = matrixHeaderRow + 1; r < matrix.length; r++) {
+          const row = matrix[r] || [];
+          const storeClean = cleanStoreName(row[matrixStoreCol]);
+          if (!storeClean || storeClean.includes('STORE NAME') || storeClean.includes('TGL')) continue;
+          const label = `Sheet '${sheetName}' Baris ${r + 1}`;
+          const locClean = storeClean.toUpperCase();
+
+          // Ekstrak dokumen PP, WLKP, K3 dari baris matriks toko
+          const docs = [];
+          if (mCols.ppAwal !== undefined || mCols.ppAkhir !== undefined) {
+            const vf = parseStrictDate(row[mCols.ppAwal]);
+            const vu = parseStrictDate(row[mCols.ppAkhir]);
+            if (vf.date || vu.date) docs.push({ docType: 'PP', descClean: 'PERATURAN PERUSAHAAN (PP)', vf: vf.date, vu: vu.date });
+          } else if (mCols.ppFlag !== undefined && Number(row[mCols.ppFlag]) === 1) {
+            docs.push({ docType: 'PP', descClean: 'PERATURAN PERUSAHAAN (PP)', vf: null, vu: null });
+          }
+
+          if (mCols.wlkpAwal !== undefined || mCols.wlkpAkhir !== undefined) {
+            const vf = parseStrictDate(row[mCols.wlkpAwal]);
+            const vu = parseStrictDate(row[mCols.wlkpAkhir]);
+            if (vf.date || vu.date) docs.push({ docType: 'WLKP', descClean: 'WLKP KEMNAKER', vf: vf.date, vu: vu.date });
+          } else if (mCols.wlkpFlag !== undefined && (Number(row[mCols.wlkpFlag]) === 1 || row[mCols.periodeAwal] || row[mCols.periodeAkhir])) {
+            const vf = parseStrictDate(row[mCols.periodeAwal]);
+            const vu = parseStrictDate(row[mCols.periodeAkhir]);
+            docs.push({ docType: 'WLKP', descClean: 'WLKP KEMNAKER', vf: vf.date, vu: vu.date });
+          }
+
+          if (mCols.gensetFlag !== undefined && Number(row[mCols.gensetFlag]) === 1) {
+            const vf = parseStrictDate(row[mCols.gensetAwal]);
+            docs.push({ docType: 'K3', descClean: 'SERTIFIKASI K3 / GENSET', vf: vf.date, vu: null });
+          }
+
+          for (const d of docs) {
+            if (d.vu) {
+              detectedPeriods.add(`${d.vu.getUTCFullYear()}-${String(d.vu.getUTCMonth() + 1).padStart(2, '0')}`);
+            }
+            parsedRows.push({
+              label,
+              storeClean,
+              locClean,
+              docType: d.docType,
+              descClean: d.descClean,
+              validFromKey: isoDateKey(d.vf),
+              validUntilKey: isoDateKey(d.vu)
+            });
+          }
+        }
+        continue;
+      }
+
       const hint = findHeaderTypoHint((matrix[0] || []).concat(matrix[1] || []), ['jenisperijinan', 'jenisperizinan', 'dokumenperizinan']);
       headerErrors.push(`Sheet '${sheetName}': Header kolom 'Jenis Perijinan' / 'Dokumen / Perizinan' tidak ditemukan${hint ? ` (kemungkinan typo pada "${hint}")` : ''}.`);
       continue;
@@ -868,11 +1030,15 @@ const validateCompliance = async (workbook, fileName) => {
       return `${sName || ''}|${loc}|${dt}|${desc}|${isoDateKey(d.validFrom)}|${isoDateKey(d.validUntil)}`;
     }));
 
+    const matchedDbMsgs = [];
     for (const r of parsedRows) {
       const key = `${r.storeClean || ''}|${r.locClean}|${r.docType}|${r.descClean}|${r.validFromKey}|${r.validUntilKey}`;
       if (dbSet.has(key)) {
-        dbDuplicates.push(`${r.label} (${r.docType} - ${r.locClean}): Dokumen perijinan ini sudah ada di database.`);
+        matchedDbMsgs.push(`${r.label} (${r.docType} - ${r.locClean}): Dokumen perijinan ini sudah ada di database.`);
       }
+    }
+    if (matchedDbMsgs.length === parsedRows.length) {
+      dbDuplicates.push(...matchedDbMsgs);
     }
   }
 
@@ -892,6 +1058,14 @@ const validateCompliance = async (workbook, fileName) => {
 // =========================
 // 4. VALIDATOR: SP DETAIL
 // =========================
+const isSpRekapSheetMatrix = (matrix) => {
+  if (!matrix || matrix.length === 0) return false;
+  const topText = matrix.slice(0, Math.min(8, matrix.length)).flat().map(v => String(v || '').toUpperCase().replace(/\s+/g, ' ').trim()).join(' ');
+  const hasRekapHeader = topText.includes('REKAPAN DATA SURAT PERINGATAN') || (topText.includes('TOTAL KARYAWAN') && topText.includes('KATEGORI SP'));
+  const hasDetailName = topText.includes('EMPLOYEE NO') || topText.includes('REFERENCE NO') || topText.includes('DISCIPLINES NAME');
+  return hasRekapHeader && !hasDetailName;
+};
+
 const validateSp = async (workbook, fileName) => {
   const headerErrors = [];
   const rowErrors = [];
@@ -901,12 +1075,16 @@ const validateSp = async (workbook, fileName) => {
 
   let targetSheets = workbook.SheetNames.filter(n => {
     const l = n.toLowerCase();
-    return (l.includes('sp') || l.includes('disiplin')) && !l.includes('demografi') && !l.includes('turnover');
+    if (!((l.includes('sp') || l.includes('disiplin')) && !l.includes('demografi') && !l.includes('turnover'))) return false;
+    const mat = xlsx.utils.sheet_to_json(workbook.Sheets[n], { header: 1 });
+    return !isSpRekapSheetMatrix(mat);
   });
   if (targetSheets.length === 0) {
     targetSheets = workbook.SheetNames.filter(n => {
       const l = n.toLowerCase();
-      return !['demografi', 'turnover', 'kehadiran', 'sales', 'fraud', 'kasus', 'phase', 'critical', 'visual', 'wlkp'].some(k => l.includes(k));
+      if (['demografi', 'karyawan', 'pegawai', 'turnover', 'kehadiran', 'absensi', 'sales', 'fraud', 'kasus', 'phase', 'critical', 'visual', 'wlkp', 'panduan'].some(k => l.includes(k))) return false;
+      const mat = xlsx.utils.sheet_to_json(workbook.Sheets[n], { header: 1 });
+      return !isSpRekapSheetMatrix(mat);
     });
   }
   if (targetSheets.length === 0) targetSheets = [workbook.SheetNames[0]];
@@ -1040,15 +1218,19 @@ const validateSp = async (workbook, fileName) => {
       }
     }
 
+    const matchedDbMsgs = [];
     for (const r of parsedRows) {
       if (r.refNo && dbRefs.has(r.refNo)) {
-        dbDuplicates.push(`${r.label} (${r.empName}, Ref: ${r.refNo}): Nomor Referensi SP sudah ada di database.`);
+        matchedDbMsgs.push(`${r.label} (${r.empName}, Ref: ${r.refNo}): Nomor Referensi SP sudah ada di database.`);
       } else if (
         (r.empNo && dbKeys.has(`${r.empNo}|${r.discType}|${r.dateKey}`)) ||
         dbKeys.has(`${r.empName}|${r.discType}|${r.dateKey}`)
       ) {
-        dbDuplicates.push(`${r.label} (${r.empName}, ${r.discType}, Tgl: ${r.dateKey || '-'}): Data SP ini sudah ada di database.`);
+        matchedDbMsgs.push(`${r.label} (${r.empName}, ${r.discType}, Tgl: ${r.dateKey || '-'}): Data SP ini sudah ada di database.`);
       }
+    }
+    if (matchedDbMsgs.length === parsedRows.length) {
+      dbDuplicates.push(...matchedDbMsgs);
     }
   }
 
@@ -1102,7 +1284,7 @@ const validateSpRekap = async (workbook, fileName) => {
       if (totalEmp === 0) continue;
       const pKey = `${currentYear}-${String(mNum).padStart(2, '0')}`;
       detectedPeriods.add(pKey);
-      parsedRows.push({ label: `Sheet '${sheetName}' Baris ${r + 1}`, year: currentYear, month: mNum, pKey });
+      parsedRows.push({ label: `Sheet '${sheetName}' Baris ${r + 1}`, year: currentYear, month: mNum, pKey, totalEmp });
     }
   }
 
@@ -1122,11 +1304,16 @@ const validateSpRekap = async (workbook, fileName) => {
       where: { scope: 'STORE' },
       include: { period: true }
     });
-    const dbSet = new Set(existing.map(e => `${e.period.year}-${String(e.period.month).padStart(2, '0')}`));
+    const dbMap = new Map(existing.map(e => [`${e.period.year}-${String(e.period.month).padStart(2, '0')}`, e]));
+    const matchedDbMsgs = [];
     for (const r of parsedRows) {
-      if (dbSet.has(r.pKey)) {
-        dbDuplicates.push(`${r.label} (Periode: ${r.pKey}): Rekap SP Toko periode ini sudah ada di database.`);
+      const ex = dbMap.get(r.pKey);
+      if (ex && ex.totalEmployees === r.totalEmp) {
+        matchedDbMsgs.push(`${r.label} (Periode: ${r.pKey}): Rekap SP Toko periode ini sudah ada di database.`);
       }
+    }
+    if (matchedDbMsgs.length === parsedRows.length) {
+      dbDuplicates.push(...matchedDbMsgs);
     }
   }
 
@@ -1146,6 +1333,8 @@ const validateSpRekap = async (workbook, fileName) => {
 // =========================
 // 6. VALIDATOR: FRAUD
 // =========================
+const FRAUD_ZERO_TOKENS = ['KLOP', 'CLOSING', 'NIHIL', 'NONE', 'N/A', 'NA'];
+
 const validateFraud = async (workbook, fileName) => {
   const headerErrors = [];
   const rowErrors = [];
@@ -1160,7 +1349,7 @@ const validateFraud = async (workbook, fileName) => {
   if (targetSheets.length === 0) {
     targetSheets = workbook.SheetNames.filter(n => {
       const l = n.toLowerCase();
-      return !['demografi', 'turnover', 'kehadiran', 'sales', 'sp', 'kasus', 'phase', 'critical', 'visual', 'wlkp'].some(k => l.includes(k));
+      return !['demografi', 'karyawan', 'pegawai', 'turnover', 'kehadiran', 'absensi', 'sales', 'sp', 'kasus', 'phase', 'critical', 'visual', 'wlkp', 'panduan'].some(k => l.includes(k));
     });
   }
   if (targetSheets.length === 0) targetSheets = [workbook.SheetNames[0]];
@@ -1212,9 +1401,9 @@ const validateFraud = async (workbook, fileName) => {
       if (!startRes.valid) rowErrors.push(`${label} (${empName}): Format Start Date / Periode tidak valid ("${startRes.raw}").`);
       if (!auditRes.valid) rowErrors.push(`${label} (${empName}): Format Tgl Audit tidak valid ("${auditRes.raw}").`);
 
-      const bakbRes = parseStrictNumber(row[col.bakb]);
+      const bakbRes = parseStrictNumber(row[col.bakb], { zeroTokens: FRAUD_ZERO_TOKENS });
       if (!bakbRes.valid) rowErrors.push(`${label} (${empName}): Nilai BAKB bukan angka valid ("${bakbRes.raw}").`);
-      const qtyRes = col.selisihQty !== undefined ? parseStrictNumber(row[col.selisihQty]) : { valid: true, num: 0 };
+      const qtyRes = col.selisihQty !== undefined ? parseStrictNumber(row[col.selisihQty], { zeroTokens: FRAUD_ZERO_TOKENS }) : { valid: true, num: 0 };
       if (!qtyRes.valid) rowErrors.push(`${label} (${empName}): Selisih Qty bukan angka valid ("${qtyRes.raw}").`);
 
       const effDate = startRes.date || auditRes.date;
@@ -1256,13 +1445,17 @@ const validateFraud = async (workbook, fileName) => {
       if (f.employee?.employeeNo) dbKeys.add(`${f.employee.employeeNo.toUpperCase()}|${st}|${dk}|${b}|${q}`);
       if (f.employee?.fullName) dbKeys.add(`${f.employee.fullName.toUpperCase()}|${st}|${dk}|${b}|${q}`);
     }
+    const matchedDbMsgs = [];
     for (const r of parsedRows) {
       if (
         (r.empNo && dbKeys.has(`${r.empNo}|${r.storeClean}|${r.dateKey}|${r.bakb}|${r.qty}`)) ||
         dbKeys.has(`${r.empName}|${r.storeClean}|${r.dateKey}|${r.bakb}|${r.qty}`)
       ) {
-        dbDuplicates.push(`${r.label} (${r.empName}, Tgl: ${r.dateKey || '-'}, BAKB: ${r.bakb}): Kasus Fraud ini sudah ada di database.`);
+        matchedDbMsgs.push(`${r.label} (${r.empName}, Tgl: ${r.dateKey || '-'}, BAKB: ${r.bakb}): Kasus Fraud ini sudah ada di database.`);
       }
+    }
+    if (matchedDbMsgs.length === parsedRows.length) {
+      dbDuplicates.push(...matchedDbMsgs);
     }
   }
 
@@ -1296,7 +1489,7 @@ const validateBipartit = async (workbook, fileName) => {
   if (targetSheets.length === 0) {
     targetSheets = workbook.SheetNames.filter(n => {
       const l = n.toLowerCase();
-      return !['demografi', 'turnover', 'kehadiran', 'sales', 'fraud', 'sp', 'phase', 'critical', 'visual', 'wlkp'].some(k => l.includes(k));
+      return !['demografi', 'karyawan', 'pegawai', 'turnover', 'kehadiran', 'absensi', 'sales', 'fraud', 'sp', 'phase', 'critical', 'visual', 'wlkp', 'panduan'].some(k => l.includes(k));
     });
   }
   if (targetSheets.length === 0) targetSheets = [workbook.SheetNames[0]];
@@ -1317,17 +1510,22 @@ const validateBipartit = async (workbook, fileName) => {
         if ((cell === 'NAME' || cell === 'NAMA' || cell.includes('NAMAKARYAWAN') || cell.includes('NAMAPEGAWAI')) && col.name === undefined) {
           col.name = c; dataStartRow = Math.max(dataStartRow, r + 1);
         } else if ((cell.includes('EMPLOYEENO') || cell.includes('NIK') || cell.includes('NOINDUK') || cell.includes('NIP')) && col.empNo === undefined) col.empNo = c;
+        else if ((cell.includes('STORENAME') || cell.includes('SHOWROOM') || cell.includes('NAMATOKO') || cell.includes('TOKO')) && col.store === undefined) col.store = c;
+        else if ((cell === 'KATEGORI' || cell === 'CATEGORY' || cell.includes('JENISKASUS') || cell.includes('TAHAPAN') || cell.includes('JALUR')) && col.categoryCol === undefined) col.categoryCol = c;
         else if (cell.includes('BIPARTIT') && col.bipartit === undefined) { col.bipartit = c; dataStartRow = Math.max(dataStartRow, r + 1); }
+        else if ((cell.includes('MEDIASI') || cell.includes('DISNAKER')) && col.mediasi === undefined) { col.mediasi = c; dataStartRow = Math.max(dataStartRow, r + 1); }
+        else if ((cell.includes('PIHAKKE3') || cell.includes('PIHAKKETIGA') || cell.includes('PIHAK3')) && col.pihak3 === undefined) { col.pihak3 = c; dataStartRow = Math.max(dataStartRow, r + 1); }
         else if ((cell.includes('KETERANGAN') || cell.includes('REMARK') || cell.includes('DESKRIPSI') || cell.includes('DETAIL')) && col.ket === undefined) col.ket = c;
         else if ((cell.includes('PERIODEAWAL') || cell.includes('STARTDATE') || cell.includes('TGLAWAL') || cell.includes('TANGGALMULAI') || cell.includes('BULANAWAL')) && col.startDate === undefined) col.startDate = c;
         else if ((cell.includes('PERIODESELESAI') || cell.includes('ENDDATE') || cell.includes('TGLAKHIR') || cell.includes('TANGGALSELESAI') || cell.includes('BULANSELESAI')) && col.endDate === undefined) col.endDate = c;
       }
     }
 
-    if (col.name === undefined) {
+    const hasBipartitCols = col.bipartit !== undefined || col.mediasi !== undefined || col.pihak3 !== undefined || col.categoryCol !== undefined;
+    if (col.name === undefined || !hasBipartitCols) {
       const sample = matrix.slice(0, Math.min(6, matrix.length)).flat().filter(Boolean);
-      const hint = findHeaderTypoHint(sample, ['name', 'nama', 'namakaryawan']);
-      headerErrors.push(`Sheet '${sheetName}': Kolom wajib 'Name / Nama' tidak ditemukan${hint ? ` (kemungkinan typo pada "${hint}")` : ''}.`);
+      const hint = findHeaderTypoHint(sample, ['name', 'nama', 'bipartit', 'mediasi', 'kategori']);
+      headerErrors.push(`Sheet '${sheetName}': Kolom wajib Hubungan Industrial ('Name / Nama' & 'Kategori / Bipartit / Mediasi') tidak ditemukan${hint ? ` (kemungkinan typo pada "${hint}")` : ''}.`);
       continue;
     }
 
@@ -1339,6 +1537,7 @@ const validateBipartit = async (workbook, fileName) => {
       const label = `Sheet '${sheetName}' Baris ${r + 1}`;
       const empNo = col.empNo !== undefined ? cleanStr(row[col.empNo]) : null;
       const ket = col.ket !== undefined ? cleanStr(row[col.ket]) : null;
+      const storeClean = col.store !== undefined ? cleanStoreName(row[col.store]) : null;
 
       if (isFormulaError(empName) || isFormulaError(ket)) {
         rowErrors.push(`${label} (${empName}): Terdapat error formula Excel.`);
@@ -1357,14 +1556,17 @@ const validateBipartit = async (workbook, fileName) => {
         label,
         empNo: empNo ? empNo.toUpperCase() : null,
         empName: empName.toUpperCase(),
-        ketKey: (ket || '').toUpperCase()
+        storeClean: storeClean || '',
+        ketKey: (ket || '').toUpperCase(),
+        startDateKey: isoDateKey(startRes.date),
+        endDateKey: isoDateKey(endRes.date)
       });
     }
   }
 
   const seenFile = new Map();
   for (const r of parsedRows) {
-    const key = `${r.empNo || r.empName}|${r.ketKey}`;
+    const key = `${r.empNo || r.empName}|${r.storeClean}|${r.ketKey}|${r.startDateKey}|${r.endDateKey}`;
     if (seenFile.has(key)) {
       fileDuplicates.push(`${r.label} (${r.empName}): Kasus Bipartit/Mediasi duplikat di dalam file dengan ${seenFile.get(key).label}.`);
     } else seenFile.set(key, r);
@@ -1380,13 +1582,17 @@ const validateBipartit = async (workbook, fileName) => {
       if (c.employee?.employeeNo) dbKeys.add(`${c.employee.employeeNo.toUpperCase()}|${desc}`);
       if (c.employee?.fullName) dbKeys.add(`${c.employee.fullName.toUpperCase()}|${desc}`);
     }
+    const matchedDbMsgs = [];
     for (const r of parsedRows) {
       if (
         (r.empNo && dbKeys.has(`${r.empNo}|${r.ketKey}`)) ||
         dbKeys.has(`${r.empName}|${r.ketKey}`)
       ) {
-        dbDuplicates.push(`${r.label} (${r.empName}): Kasus Bipartit/Mediasi ini sudah ada di database.`);
+        matchedDbMsgs.push(`${r.label} (${r.empName}): Kasus Bipartit/Mediasi ini sudah ada di database.`);
       }
+    }
+    if (matchedDbMsgs.length === parsedRows.length) {
+      dbDuplicates.push(...matchedDbMsgs);
     }
   }
 
@@ -1420,7 +1626,7 @@ const validateAttendance = async (workbook, fileName) => {
   if (targetSheets.length === 0) {
     targetSheets = workbook.SheetNames.filter(n => {
       const l = n.toLowerCase();
-      return !['demografi', 'turnover', 'sales', 'fraud', 'sp', 'kasus', 'phase', 'critical', 'visual', 'wlkp'].some(k => l.includes(k));
+      return !['demografi', 'karyawan', 'pegawai', 'turnover', 'sales', 'fraud', 'sp', 'kasus', 'phase', 'critical', 'visual', 'wlkp', 'panduan'].some(k => l.includes(k));
     });
   }
   if (targetSheets.length === 0) targetSheets = [workbook.SheetNames[0]];
@@ -1489,7 +1695,7 @@ const validateAttendance = async (workbook, fileName) => {
 
       const pKey = `${parsedDate.year}-${String(parsedDate.month).padStart(2, '0')}`;
       detectedPeriods.add(pKey);
-      parsedRows.push({ label, scope: currentScope, pKey, year: parsedDate.year, month: parsedDate.month });
+      parsedRows.push({ label, scope: currentScope, pKey, year: parsedDate.year, month: parsedDate.month, totalEmp, sick, perm, leave, alpha });
     }
 
     if (!foundHeader) {
@@ -1509,11 +1715,16 @@ const validateAttendance = async (workbook, fileName) => {
 
   if (parsedRows.length > 0) {
     const existing = await prisma.attendanceAggregateMonthly.findMany({ include: { period: true } });
-    const dbSet = new Set(existing.map(a => `${a.period.year}-${String(a.period.month).padStart(2, '0')}|${String(a.scope || 'HQ').toUpperCase()}`));
+    const dbMap = new Map(existing.map(a => [`${a.period.year}-${String(a.period.month).padStart(2, '0')}|${String(a.scope || 'HQ').toUpperCase()}`, a]));
+    const matchedDbMsgs = [];
     for (const r of parsedRows) {
-      if (dbSet.has(`${r.pKey}|${r.scope}`)) {
-        dbDuplicates.push(`${r.label} (Periode: ${r.pKey}, Scope: ${r.scope}): Data absensi periode ini sudah ada di database.`);
+      const ex = dbMap.get(`${r.pKey}|${r.scope}`);
+      if (ex && ex.totalEmployees === r.totalEmp && ex.sickCount === r.sick && ex.permissionCount === r.perm && ex.annualLeaveCount === r.leave && ex.absentCount === r.alpha) {
+        matchedDbMsgs.push(`${r.label} (Periode: ${r.pKey}, Scope: ${r.scope}): Data absensi periode ini sudah ada di database.`);
       }
+    }
+    if (matchedDbMsgs.length === parsedRows.length) {
+      dbDuplicates.push(...matchedDbMsgs);
     }
   }
 
@@ -1547,7 +1758,7 @@ const validateSales = async (workbook, fileName) => {
   if (targetSheets.length === 0) {
     targetSheets = workbook.SheetNames.filter(n => {
       const l = n.toLowerCase();
-      return !['demografi', 'turnover', 'kehadiran', 'fraud', 'sp', 'kasus', 'phase', 'critical', 'visual', 'wlkp'].some(k => l.includes(k));
+      return !['demografi', 'karyawan', 'pegawai', 'turnover', 'kehadiran', 'absensi', 'fraud', 'sp', 'kasus', 'phase', 'critical', 'visual', 'wlkp', 'panduan'].some(k => l.includes(k));
     });
   }
   if (targetSheets.length === 0) targetSheets = [workbook.SheetNames[0]];
@@ -1577,7 +1788,9 @@ const validateSales = async (workbook, fileName) => {
     for (let c = 0; c < headerMonths.length; c++) {
       const txt = headerMonths[c];
       if (typeof txt !== 'string') continue;
-      const u = txt.toUpperCase();
+      const u = txt.toUpperCase().trim();
+      // Abaikan kolom rekapitulasi TOTAL atau rekonsiliasi keuangan ("By Keu")
+      if (u.includes('TOTAL') || u.includes('BY KEU')) continue;
       const isActual = u.includes('ACTUAL');
       const isTarget = u.includes('TARGET');
       if (!isActual && !isTarget) continue;
@@ -1637,7 +1850,7 @@ const validateSales = async (workbook, fileName) => {
       for (const entry of monthMap.values()) {
         if (!entry.hasErr && (entry.qty > 0 || entry.val > 0)) {
           detectedPeriods.add(entry.pKey);
-          parsedEntries.push({ label, storeClean, pKey: entry.pKey });
+          parsedEntries.push({ label, storeClean, pKey: entry.pKey, qty: entry.qty, val: entry.val });
         }
       }
     }
@@ -1655,14 +1868,19 @@ const validateSales = async (workbook, fileName) => {
     const existing = await prisma.salesMonthly.findMany({
       include: { period: true, store: { select: { storeName: true } } }
     });
-    const dbSet = new Set(existing.map(s => {
+    const dbMap = new Map(existing.map(s => {
       const st = cleanStoreName(s.store?.storeName);
-      return `${st || ''}|${s.period.year}-${String(s.period.month).padStart(2, '0')}`;
+      return [`${st || ''}|${s.period.year}-${String(s.period.month).padStart(2, '0')}`, s];
     }));
+    const matchedDbMsgs = [];
     for (const e of parsedEntries) {
-      if (dbSet.has(`${e.storeClean}|${e.pKey}`)) {
-        dbDuplicates.push(`${e.label} (${e.storeClean}, Periode: ${e.pKey}): Data sales toko periode ini sudah ada di database.`);
+      const ex = dbMap.get(`${e.storeClean}|${e.pKey}`);
+      if (ex && Math.round(Number(ex.netSales || 0)) === Math.round(Number(e.val || 0))) {
+        matchedDbMsgs.push(`${e.label} (${e.storeClean}, Periode: ${e.pKey}): Data sales toko periode ini sudah ada di database.`);
       }
+    }
+    if (matchedDbMsgs.length === parsedEntries.length) {
+      dbDuplicates.push(...matchedDbMsgs);
     }
   }
 

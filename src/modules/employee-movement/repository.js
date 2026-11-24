@@ -166,9 +166,24 @@ const processBulkMovement = async (parsedData) => {
         });
       }
       if (!employee) {
-        employee = await prisma.employee.findFirst({
+        const candidates = await prisma.employee.findMany({
           where: { fullName: { equals: cleanEmpName, mode: 'insensitive' } }
         });
+        if (candidates.length > 0) {
+          if (row.joinDate instanceof Date && !isNaN(row.joinDate.getTime())) {
+            const targetTime = row.joinDate.getTime();
+            // Prioritaskan karyawan dengan tanggal masuk yang cocok (toleransi 36 jam untuk perbedaan timezone UTC vs lokal)
+            employee = candidates.find(c => c.joinDate && Math.abs(new Date(c.joinDate).getTime() - targetTime) <= 36 * 3600 * 1000) || null;
+            // Jika tidak ada yang tanggal masuknya cocok, hanya gunakan kandidat yang masih ACTIVE dengan tahun masuk yang sama
+            if (!employee) {
+              employee = candidates.find(
+                c => c.status === 'ACTIVE' && (!c.joinDate || new Date(c.joinDate).getUTCFullYear() === row.joinDate.getUTCFullYear())
+              ) || null;
+            }
+          } else {
+            employee = candidates.find(c => c.status === 'ACTIVE') || candidates[0];
+          }
+        }
       }
 
       const safeJoinDate = row.joinDate || new Date(row.movementDate.getFullYear(), 0, 1);

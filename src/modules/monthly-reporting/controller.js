@@ -135,9 +135,8 @@ const uploadAttendance = async (req, res) => {
   try {
     if (!req.file) throw new Error("File Excel absensi wajib diunggah!");
     const rawData = parseExcel(req.file.path);
-    // Ganti pemanggilan service
-    const data = await service.importAttendanceAggregate(req.params.periodId, rawData);
-    res.status(201).json({ success: true, message: `Data absensi global ter-import`, fileName: req.file.filename });
+    const data = await service.importAttendanceAggregate(rawData);
+    res.status(201).json({ success: true, message: `Data absensi global ter-import`, data, fileName: req.file.filename });
   } catch (error) {
     if (req.file) fs.unlinkSync(req.file.path);
     res.status(400).json({ success: false, message: error.message });

@@ -348,7 +348,16 @@ const processBulkBipartit = async (parsedData) => {
           caseStatus = row.status;
         }
       } else {
-        const isFinished = Boolean(row.endDate) || ketUpper.includes('SELESAI') || ketUpper.includes('CLOSE');
+        const isExplicitProcessKet =
+          ketUpper === 'BIPARTIT' ||
+          ketUpper === 'MEDIASI' ||
+          ketUpper === 'MEDIASI DISNAKER' ||
+          ketUpper === 'PIHAK KE 3' ||
+          ketUpper === 'PHI';
+        const isFinished =
+          ketUpper.includes('SELESAI') ||
+          ketUpper.includes('CLOSE') ||
+          (Boolean(row.endDate) && Boolean(row.hasStartDate) && !isExplicitProcessKet);
         if (isFinished) {
           caseStatus = 'SELESAI';
         } else {

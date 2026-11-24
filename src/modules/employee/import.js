@@ -317,7 +317,16 @@ const processExcelImport = async (filePath, originalFilename = '') => {
       periodYear: rowPeriod.year,
       periodMonth: rowPeriod.month
     };
-  }).filter(data => data.employeeNo && data.employeeNo !== 'undefined' && data.employeeNo.trim() !== '');
+  }).filter(data => {
+    if (!data.employeeNo || data.employeeNo === 'undefined') return false;
+    const empNoClean = data.employeeNo.trim().replace(/^['"`\s]+/, '').toUpperCase();
+    if (!empNoClean) return false;
+    const nameClean = String(data.fullName || '').trim().toUpperCase();
+    const isSummaryOrIndexRow =
+      (['TOTAL', 'SUM', 'SUBTOTAL', 'RATA-RATA', '1'].includes(empNoClean) && (!nameClean || nameClean === 'TIDAK ADA NAMA' || nameClean === 'TOTAL' || /^\d+$/.test(nameClean))) ||
+      (/^\d+$/.test(empNoClean) && /^\d+$/.test(nameClean));
+    return !isSummaryOrIndexRow;
+  });
 
   if (formattedData.length === 0) {
     return {
@@ -466,12 +475,12 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
       const incomingEmpIds = snapRows.map(s => s.employeeId);
 
       // Logika pembersihan snapshot yang presisi & terisolasi:
-      if (incomingHoCount >= 5 && incomingStoreCount >= 5) {
-        // File adalah gabungan utuh HO dan Toko sekaligus -> Bersihkan seluruh snapshot periode ini
+      if (incomingHoCount > 0 && incomingStoreCount > 0) {
+        // File adalah gabungan HO dan Toko sekaligus -> Bersihkan seluruh snapshot periode ini
         await prisma.employeeMonthlySnapshot.deleteMany({
           where: { periodId: period.id }
         });
-      } else if (incomingStoreCount > 0 && incomingHoCount < 5) {
+      } else if (incomingStoreCount > 0 && incomingHoCount === 0) {
         // File adalah data Toko (Store) -> Bersihkan data Toko lama & pastikan employeeId yg masuk tidak bentrok
         await prisma.employeeMonthlySnapshot.deleteMany({
           where: {
@@ -482,7 +491,7 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
             ]
           }
         });
-      } else if (incomingHoCount > 0 && incomingStoreCount < 5) {
+      } else if (incomingHoCount > 0 && incomingStoreCount === 0) {
         // File adalah data HO (Kantor Pusat) -> Bersihkan data HO lama & pastikan employeeId yg masuk tidak bentrok
         await prisma.employeeMonthlySnapshot.deleteMany({
           where: {

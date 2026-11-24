@@ -76,6 +76,8 @@ const EXACT_LEVEL_MAP = {
   'ASST. HEAD': 'Asst Head',
   'ASISTEN HEAD': 'Asst Head',
   'LEADER': 'Leader',
+  'SUPERVISOR': 'Leader',
+  'SPV': 'Leader',
   'STAFF': 'Staff',
   'INTERN': 'Staff',
   'OPR': 'Operator',
@@ -152,8 +154,14 @@ const classifyEmployeeLevel = (emp, item = null) => {
     }
   }
 
-  // Prioritaskan Level Jabatan eksplisit agar kata di nama jabatan (misal "MANAGER OF BRAND MOUTLEY" dg level HEAD) tidak salah klasifikasi
-  if (levelStr && EXACT_LEVEL_MAP[levelStr]) {
+  // Jika Nama Jabatan sendiri adalah kode level eksplisit non-Staff (misal JABATAN = "Direktur/CEO" atau "GM/VP")
+  if (nameStr && EXACT_LEVEL_MAP[nameStr] && EXACT_LEVEL_MAP[nameStr] !== 'Staff') {
+    return EXACT_LEVEL_MAP[nameStr];
+  }
+
+  // Prioritaskan Level Jabatan eksplisit non-Staff agar kata di nama jabatan (misal "MANAGER OF BRAND MOUTLEY" dg level HEAD) tidak salah klasifikasi.
+  // Jika Level Jabatan masih default 'STAFF', tetap lanjutkan pemeriksaan kata kunci nama jabatan di bawah.
+  if (levelStr && EXACT_LEVEL_MAP[levelStr] && EXACT_LEVEL_MAP[levelStr] !== 'Staff') {
     return EXACT_LEVEL_MAP[levelStr];
   }
 
@@ -184,6 +192,7 @@ const classifyEmployeeLevel = (emp, item = null) => {
   if (
     !isCreativeOrArtDirector && (
       comb.includes('DIREKTUR') ||
+      comb.includes('DIRECTUR') ||
       comb.includes('PRESIDENT DIRECTOR') ||
       comb.includes('MANAGING DIRECTOR') ||
       comb.includes('EXECUTIVE DIRECTOR') ||
@@ -240,7 +249,7 @@ const classifyEmployeeLevel = (emp, item = null) => {
     levelStr === 'PERBANTUAN' ||
     comb.includes('OPERATOR') ||
     comb.includes('DRIVER') ||
-    comb.includes('WAREHOUSE') ||
+    (comb.includes('WAREHOUSE') && !comb.includes('STAFF') && !comb.includes('ADMIN')) ||
     comb.includes('BORONGAN') ||
     comb.includes('PERBANTUAN') ||
     comb.includes('HELPER') ||
@@ -681,7 +690,9 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
 
   const productionEmployees = snapshots.filter(s => {
     const divName = String(s.division?.name || s.employee?.division?.name || '').toUpperCase().trim();
-    return divName === 'SUPPLY CHAIN' || divName.includes('SUPPLY CHAIN');
+    const deptName = String(s.department?.name || s.employee?.department?.name || '').toUpperCase().trim();
+    const unitName = String(s.unit?.name || s.employee?.unit?.name || '').toUpperCase().trim();
+    return divName.includes('SUPPLY CHAIN') || deptName.includes('SUPPLY CHAIN') || unitName.includes('SUPPLY CHAIN');
   });
 
   const prodHeadcount = productionEmployees.length;
@@ -772,8 +783,27 @@ const getDashboardSummary = async (periodId, scope = 'Corporate') => {
 };
 
 const getStorePerformanceDashboard = async (periodId, year = null) => {
-  const salesData = await repository.getSalesByPeriod(periodId, year);
-  const employees = await repository.getActiveEmployeesForSnapshot();
+  const [salesData, periodSnapshots] = await Promise.all([
+    repository.getSalesByPeriod(periodId, year),
+    repository.getMonthlySnapshots(periodId, year)
+  ]);
+  const storeSnapshots = periodSnapshots.filter(s => s.storeId !== null);
+  let employees = [];
+  if (storeSnapshots.length > 0) {
+    employees = storeSnapshots.map(s => ({
+      ...(s.employee || {}),
+      storeId: s.storeId,
+      store: s.store || s.employee?.store || null,
+      position: s.position || s.employee?.position || null,
+      division: s.division || s.employee?.division || null,
+      department: s.department || s.employee?.department || null,
+      baseSalary: s.actualLabourCost || s.budgetLabourCost || s.employee?.baseSalary || 0,
+      ageYears: s.ageYears,
+      tenureYears: s.tenureYears
+    }));
+  } else {
+    employees = await repository.getActiveEmployeesForSnapshot();
+  }
 
   const today = new Date();
   let totalNetSales = 0;
@@ -820,8 +850,8 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
   employees.forEach(emp => {
     const storeName = emp.store?.storeName || '';
     const region = inferRegion(storeName, emp.store?.region);
-    const age = calculateYears(emp.birthDate);
-    const tenure = calculateYears(emp.joinDate);
+    const age = (emp.ageYears !== undefined && emp.ageYears !== null) ? Number(emp.ageYears) : calculateYears(emp.birthDate);
+    const tenure = (emp.tenureYears !== undefined && emp.tenureYears !== null) ? Number(emp.tenureYears) : calculateYears(emp.joinDate);
     const posName = (emp.position?.name || emp.position?.employeeLevel || 'UNKNOWN').toUpperCase();
     const storeId = emp.storeId;
     const realSalary = parseFloat(emp.baseSalary || 0);
@@ -998,7 +1028,7 @@ const getTurnoverDashboard = async (year, month, scope = 'Corporate') => {
 
     positionCountMap[posName] = (positionCountMap[posName] || 0) + 1;
     if (type === 'VOLUNTARY') voluntaryReasons[reason] = (voluntaryReasons[reason] || 0) + 1;
-    if (type === 'INVOLUNTARY') involuntaryReasons[reason] = (involuntaryReasons[reason] || 0) + 1;
+    if (type === 'INVOLUNTARY' || type === 'CONTRACT_END') involuntaryReasons[reason] = (involuntaryReasons[reason] || 0) + 1;
   });
 
   const formatRank = (obj) => Object.entries(obj)
@@ -1116,12 +1146,13 @@ const year = parseInt(filters.year, 10) || new Date().getFullYear();
     throw new Error(`Data periode untuk ${month}-${year} belum tersedia di sistem.`);
   }
 
-  // Jalankan secara paralel (termasuk menarik ringkasan SP, Hubungan Industrial, & Perizinan WLKP/PP/K3)
-  const [summaryData, storeData, turnoverData, industrialAndSp] = await Promise.all([
+  // Jalankan secara paralel (termasuk menarik ringkasan SP, Hubungan Industrial, Perizinan WLKP/PP/K3, & daftar tahun dinamis)
+  const [summaryData, storeData, turnoverData, industrialAndSp, availableYears] = await Promise.all([
     getDashboardSummary(period.id, scope),
     getStorePerformanceDashboard(period.id, year),
     getTurnoverDashboard(year, month, scope),
-    repository.getIndustrialAndSpSummary(year, month, spYear)
+    repository.getIndustrialAndSpSummary(year, month, spYear),
+    repository.getAvailableYears()
   ]);
 
   const monthlyResigned = turnoverData.data.overview.kpi.monthlyTurnover || 0;
@@ -1202,6 +1233,7 @@ const year = parseInt(filters.year, 10) || new Date().getFullYear();
 
   return {
     filters: { year, month, scope },
+    availableYears,
     summary: summaryData,
     storePerformance: storeData.data,
     turnoverAndRetention: turnoverData.data,

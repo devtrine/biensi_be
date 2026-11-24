@@ -14,22 +14,48 @@ const calculateYears = (startDate) => {
 const parseMonthYear = (monthStr) => {
   if (!monthStr) return null;
   const str = String(monthStr).toUpperCase().trim();
+  if (str.includes('TOTAL') || str.includes('BY KEU')) return null;
   const months = {
-    'JAN': 1, 'JANUARI': 1, 'FEB': 2, 'FEBRUARI': 2, 'MAR': 3, 'MARET': 3,
-    'APR': 4, 'APRIL': 4, 'MEI': 5, 'MAY': 5, 'JUN': 6, 'JUNI': 6,
-    'JUL': 7, 'JULI': 7, 'AGU': 8, 'AGUSTUS': 8, 'SEP': 9, 'SEPTEMBER': 9,
-    'OKT': 10, 'OKTOBER': 10, 'NOV': 11, 'NOVEMBER': 11, 'DES': 12, 'DESEMBER': 12
+    'JAN': 1, 'JANUARI': 1, 'JANUARY': 1,
+    'FEB': 2, 'FEBRUARI': 2, 'FEBRUARY': 2, 'PEB': 2,
+    'MAR': 3, 'MARET': 3, 'MARCH': 3,
+    'APR': 4, 'APRIL': 4,
+    'MEI': 5, 'MAY': 5,
+    'JUN': 6, 'JUNI': 6, 'JUNE': 6,
+    'JUL': 7, 'JULI': 7, 'JULY': 7,
+    'AGU': 8, 'AGUST': 8, 'AGUSTUS': 8, 'AGT': 8, 'AUG': 8, 'AUGUST': 8,
+    'SEP': 9, 'SEPT': 9, 'SEPTEMBER': 9,
+    'OKT': 10, 'OKTOBER': 10, 'OCT': 10, 'OCTOBER': 10,
+    'NOV': 11, 'NOVEMBER': 11, 'NOP': 11,
+    'DES': 12, 'DESEMBER': 12, 'DEC': 12, 'DECEMBER': 12
   };
-  
-  // Regregator berdasarkan spasi 
-  const parts = str.split(/\s+/); 
+
+  // Pisahkan berdasarkan spasi, garis miring (/), atau tanda hubung (-)
+  const parts = str.split(/[\s/\\-]+/).filter(Boolean);
   if (parts.length < 2) return null;
-  const monthName = parts[parts.length - 2].replace(/[^A-Z]/g, ''); 
-  const year = parseInt(parts[parts.length - 1]);
-  
+  const monthName = parts[parts.length - 2].replace(/[^A-Z]/g, '');
+  const year = parseInt(parts[parts.length - 1], 10);
+
   const month = months[monthName];
   if (!month || isNaN(year)) return null;
   return { year, month };
+};
+
+const parseSalesNum = (val) => {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  let s = String(val).trim();
+  if (!s || s === '-') return 0;
+  s = s.replace(/^(RP\.?|IDR)\s*/i, '').replace(/\s+/g, '');
+  if (!s || s === '-' || s === '0') return 0;
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) {
+    s = s.replace(/,/g, '');
+  } else if (/^-?\d+,\d+$/.test(s)) {
+    s = s.replace(',', '.');
+  }
+  return parseFloat(s) || 0;
 };
 
 // Fungsi pencari/pembuat periode dinamis
@@ -164,7 +190,10 @@ const importActualLabourCost = async (periodId, rawData) => {
   // rawData expect: [{ nik: "EMP-01", actualAmount: 5500000 }]
   const employees = await repository.getAllEmployeesNik();
   const kamusNik = {};
-  employees.forEach(e => kamusNik[e.nik] = e.id);
+  employees.forEach(e => {
+    if (e.employeeNo) kamusNik[e.employeeNo] = e.id;
+    if (e.nik) kamusNik[e.nik] = e.id;
+  });
 
   let successCount = 0;
   const updatePromises = rawData.map(row => {
@@ -675,6 +704,7 @@ const importSalesUniversal = async (filePath) => {
         const headerText = headerMonths[colIndex];
         if (typeof headerText !== 'string') continue;
         const upper = headerText.toUpperCase();
+        if (upper.includes('TOTAL') || upper.includes('BY KEU')) continue;
         const isActual = upper.includes('ACTUAL');
         const isTarget = upper.includes('TARGET');
         if (!isActual && !isTarget) continue;
@@ -686,10 +716,10 @@ const importSalesUniversal = async (filePath) => {
         const entry = monthSalesMap.get(key) || { year: parsed.year, month: parsed.month, salesQty: 0, netSales: 0, targetSales: 0 };
 
         if (isTarget) {
-          entry.targetSales = parseFloat(row[colIndex + 1]) || 0;
+          entry.targetSales = parseSalesNum(row[colIndex + 1]);
         } else if (isActual) {
-          entry.salesQty = parseFloat(row[colIndex]) || 0;
-          entry.netSales = parseFloat(row[colIndex + 1]) || 0;
+          entry.salesQty = parseSalesNum(row[colIndex]);
+          entry.netSales = parseSalesNum(row[colIndex + 1]);
         }
         monthSalesMap.set(key, entry);
       }

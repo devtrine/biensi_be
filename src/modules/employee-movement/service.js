@@ -38,8 +38,8 @@ const excelDateToJSDate = (serial) => {
 };
 
 const getValue = (row, targetKey) => {
-  const target = targetKey.replace(/\s+/g, '').toLowerCase();
-  const exactKey = Object.keys(row).find(key => key.replace(/\s+/g, '').toLowerCase() === target);
+  const target = targetKey.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  const exactKey = Object.keys(row).find(key => key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === target);
   return exactKey ? row[exactKey] : undefined;
 };
 
@@ -47,6 +47,8 @@ const getValContaining = (row, ...substrings) => {
   for (const [k, v] of Object.entries(row)) {
     if (v === null || v === undefined || String(v).trim() === '') continue;
     const normKey = k.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    // Jangan pernah membaca kolom tanggal (misal "TGL RESIGN/ HABIS KONTRAK") sebagai kolom alasan
+    if (normKey.includes('tgl') || normKey.includes('tanggal') || normKey.includes('date')) continue;
     if (substrings.some(sub => normKey.includes(sub))) return v;
   }
   return undefined;
@@ -124,9 +126,26 @@ const importBulkMovement = async (filePath) => {
     const h1Upper = headers1.join('').toUpperCase();
     const h2Upper = headers2.join('').toUpperCase();
     const combinedHeaderStr = h1Upper + h2Upper;
-    const isNewTurnoverFormat = combinedHeaderStr.includes('TIPETURNOVER') || combinedHeaderStr.includes('NIKKARYAWAN') || combinedHeaderStr.includes('ALASANKELUAR');
-    const isFormatToko = h1Upper.includes('SHOWROOM') || h1Upper.includes('REGIONAL');
-    const isFormatHO = (combinedHeaderStr.includes('KATEGORIPHK') || (h1Upper.includes('DIVISI') && (combinedHeaderStr.includes('RESIGN') || combinedHeaderStr.includes('PHK'))));
+    const combinedNorm = combinedHeaderStr.replace(/[^A-Z0-9]/g, '');
+
+    // Pastikan sheet Demografi Karyawan tidak pernah diproses sebagai Turnover
+    const isDemographySheet =
+      combinedNorm.includes('TANGGALLAHIR') ||
+      combinedNorm.includes('TGLLAHIR') ||
+      combinedNorm.includes('PENDIDIKANTERAKHIR') ||
+      combinedNorm.includes('LABOURCOST');
+    if (isDemographySheet) continue;
+
+    const hasTurnoverSignal =
+      combinedNorm.includes('RESIGN') ||
+      combinedNorm.includes('PHK') ||
+      combinedNorm.includes('TURNOVER') ||
+      combinedNorm.includes('ALASANKELUAR') ||
+      combinedNorm.includes('KATEGORIPEMISAHAN');
+
+    const isNewTurnoverFormat = combinedNorm.includes('TIPETURNOVER') || combinedNorm.includes('ALASANKELUAR') || combinedNorm.includes('KATEGORIPEMISAHAN');
+    const isFormatToko = (h1Upper.includes('SHOWROOM') || h1Upper.includes('REGIONAL')) && hasTurnoverSignal;
+    const isFormatHO = (combinedNorm.includes('KATEGORIPHK') || (h1Upper.includes('DIVISI') && hasTurnoverSignal));
 
     let rawExcelData = [];
 
@@ -197,19 +216,24 @@ const importBulkMovement = async (filePath) => {
 
       const mappedData = rawExcelData.map(row => {
         const reason = determineReasonToko(row);
-        const moveDate = excelDateToJSDate(getValue(row, 'tglresign/habiskontrak') || getValue(row, 'tanggalresign/habiskontrak'));
+        const moveDate = excelDateToJSDate(
+          getValue(row, 'tglresign/habiskontrak') ||
+          getValue(row, 'tanggalresign/habiskontrak') ||
+          getValue(row, 'tanggalresign') ||
+          getValue(row, 'tglresign')
+        );
         return {
-          employeeNo: getValue(row, 'employeeno') || getValue(row, 'nik') || null,
-          region: getValue(row, 'arearegional'),
+          employeeNo: getValue(row, 'employeeno') || getValue(row, 'nik') || getValue(row, 'nikkaryawan') || null,
+          region: getValue(row, 'arearegional') || getValue(row, 'regional'),
           asstHead: getValue(row, 'assthead'),
           storeType: getValue(row, 'kategori') || getValue(row, 'katagori'),
-          storeName: getValue(row, 'showroom/counter') || getValue(row, 'showroom'),
+          storeName: getValue(row, 'showroom/counter') || getValue(row, 'showroom') || getValue(row, 'namatoko') || getValue(row, 'toko'),
           employeeName: getValue(row, 'namakaryawan'),
           positionName: getValue(row, 'jabatan/position') || getValue(row, 'jabatan') || getValue(row, 'position') || null,
-          joinDate: excelDateToJSDate(getValue(row, 'tanggalmasukkerja')),
+          joinDate: excelDateToJSDate(getValue(row, 'tanggalmasukkerja') || getValue(row, 'tglmasukkerja') || getValue(row, 'tglmskkrj')),
           movementDate: moveDate,
           reason: String(reason).trim().toUpperCase(),
-          movementType: getMovementType(reason)
+          movementType: resolveMovementType(row, reason)
         };
       });
       allFormattedData.push(...mappedData);
@@ -218,18 +242,23 @@ const importBulkMovement = async (filePath) => {
       rawExcelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { range: headerRowIndex });
 
       const mappedData = rawExcelData.map(row => {
-        const reason = String(getValue(row, 'kategoriphk') || 'LAINNYA').trim().toUpperCase();
-        const moveDate = excelDateToJSDate(getValue(row, 'tanggalresign/habiskontrak') || getValue(row, 'tglresign/habiskontrak'));
+        const reason = String(getValue(row, 'kategoriphk') || getValue(row, 'alasankeluar') || getValue(row, 'alasan') || 'LAINNYA').trim().toUpperCase();
+        const moveDate = excelDateToJSDate(
+          getValue(row, 'tanggalresign/habiskontrak') ||
+          getValue(row, 'tglresign/habiskontrak') ||
+          getValue(row, 'tanggalresign') ||
+          getValue(row, 'tglresign')
+        );
         return {
-          employeeNo: getValue(row, 'employeeno') || getValue(row, 'nik') || null,
+          employeeNo: getValue(row, 'employeeno') || getValue(row, 'nik') || getValue(row, 'nikkaryawan') || null,
           employeeName: getValue(row, 'namakaryawan'),
           divisionName: getValue(row, 'divisi'),
           departmentName: getValue(row, 'departemen'),
           positionName: getValue(row, 'jabatan/position') || getValue(row, 'jabatan') || getValue(row, 'position') || null,
-          joinDate: excelDateToJSDate(getValue(row, 'tanggalmasukkerja')),
+          joinDate: excelDateToJSDate(getValue(row, 'tanggalmasukkerja') || getValue(row, 'tglmasukkerja') || getValue(row, 'tglmskkrj')),
           movementDate: moveDate,
           reason: reason,
-          movementType: getMovementType(reason)
+          movementType: resolveMovementType(row, reason)
         };
       });
       allFormattedData.push(...mappedData);
@@ -303,7 +332,7 @@ const getTurnoverDashboard = async (year, month) => {
 
     positionCountMap[posName] = (positionCountMap[posName] || 0) + 1;
     if (type === 'VOLUNTARY') voluntaryReasons[reason] = (voluntaryReasons[reason] || 0) + 1;
-    if (type === 'INVOLUNTARY') involuntaryReasons[reason] = (involuntaryReasons[reason] || 0) + 1;
+    if (type === 'INVOLUNTARY' || type === 'CONTRACT_END') involuntaryReasons[reason] = (involuntaryReasons[reason] || 0) + 1;
   });
 
   const formatRank = (obj) => Object.entries(obj)

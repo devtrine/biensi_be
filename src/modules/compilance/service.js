@@ -35,7 +35,7 @@ const parseExcelDate = (val) => {
 // Sinonim Header Bahasa and prevent Urutan Kolom Tertukar
 const HEADER_ALIASES = {
   entityName: ['PERUSAHAAN', 'ENTITAS', 'COMPANY', 'ENTITY'],
-  permitType: ['JENISPERIJINAN', 'JENISPERIZINAN', 'JENISDOKUMEN', 'PERMITTYPE', 'DOCUMENTTYPE', 'CATEGORY', 'JENIS'],
+  permitType: ['JENISPERIJINAN', 'JENISPERIZINAN', 'JENISDOKUMEN', 'JENISIZIN', 'PERMITTYPE', 'DOCUMENTTYPE', 'KATEGORIPERIZINAN'],
   storeName: ['NAMATOKO', 'STORENAME', 'SHOWROOM', 'CABANG', 'BRANCH', 'UNITKERJA'],
   documentName: ['DOKUMEN/PERIZINAN', 'DOKUMEN/PERIJINAN', 'NAMADOKUMEN', 'DOCUMENTNAME', 'INSTRUMEN', 'DOKUMEN', 'PERIZINAN'],
   location: ['LOKASI', 'LOCATION', 'WILAYAH', 'TEMPAT', 'SITE'],
@@ -107,7 +107,141 @@ const importComplianceData = async (filePath) => {
       }
     }
 
-    if (listHeaderRow === -1) continue;
+    // 1b. Fallback Format Matriks Toko (STORE NAME + PP / WLKP / PERIODE / GENSET)
+    let matrixHeaderRow = -1;
+    let matrixStoreCol = -1;
+    const mCols = {};
+    if (listHeaderRow === -1) {
+      for (let r = 0; r < Math.min(10, rawMatrix.length); r++) {
+        const row = rawMatrix[r] || [];
+        for (let c = 0; c < row.length; c++) {
+          const cell = String(row[c] || '').toUpperCase().replace(/\s+/g, '');
+          if (!cell) continue;
+          if ((cell.includes('STORENAME') || cell === 'NAMATOKO') && matrixStoreCol === -1) {
+            matrixStoreCol = c;
+            matrixHeaderRow = r;
+          }
+          if (cell.includes('PPTGLAWAL')) mCols.ppAwal = c;
+          else if (cell.includes('PPTGLAKHIR')) mCols.ppAkhir = c;
+          else if (cell.includes('WLKPTGLAWAL')) mCols.wlkpAwal = c;
+          else if (cell.includes('WLKPTGLAKHIR')) mCols.wlkpAkhir = c;
+          else if ((cell.includes('PERATURANPERUSAHAAN') || cell === 'PP') && mCols.ppFlag === undefined) mCols.ppFlag = c;
+          else if (cell === 'WLKP' && mCols.wlkpFlag === undefined) mCols.wlkpFlag = c;
+          else if (cell === 'PERIODE' && mCols.periodeAwal === undefined) { mCols.periodeAwal = c; mCols.periodeAkhir = c + 1; }
+          else if (cell === 'GENSET' && mCols.gensetFlag === undefined) { mCols.gensetFlag = c; mCols.gensetAwal = c + 1; }
+        }
+      }
+    }
+
+    const hasMatrixCompliance =
+      mCols.ppAwal !== undefined ||
+      mCols.wlkpAwal !== undefined ||
+      mCols.ppFlag !== undefined ||
+      mCols.wlkpFlag !== undefined;
+
+    if (listHeaderRow === -1 && (matrixStoreCol === -1 || !hasMatrixCompliance)) continue;
+
+    if (listHeaderRow === -1 && matrixStoreCol !== -1 && hasMatrixCompliance) {
+      for (let r = matrixHeaderRow + 1; r < rawMatrix.length; r++) {
+        const row = rawMatrix[r] || [];
+        const rawStore = row[matrixStoreCol];
+        if (!rawStore || String(rawStore).trim() === '') continue;
+        const storeName = String(rawStore).trim();
+        const storeUpper = storeName.toUpperCase();
+        if (storeUpper.includes('STORE NAME') || storeUpper === 'NAMA TOKO' || storeUpper.includes('TGL') || storeUpper === 'TOTAL') continue;
+
+        const isHo = ['HO', 'HEAD OFFICE', 'KANTOR PUSAT', '-'].includes(storeUpper);
+        const location = isHo ? 'HO' : storeName;
+        const documents = [];
+
+        if (mCols.ppAwal !== undefined || mCols.ppAkhir !== undefined) {
+          const vf = parseExcelDate(row[mCols.ppAwal]);
+          const vu = parseExcelDate(row[mCols.ppAkhir]);
+          if (vf || vu) {
+            documents.push({
+              type: 'PP',
+              description: 'PERATURAN PERUSAHAAN (PP)',
+              location,
+              validFrom: vf,
+              validUntil: vu,
+              pic: null,
+              rawStatus: 'Aktif',
+              remainingDays: 0,
+              notes: null
+            });
+          }
+        } else if (mCols.ppFlag !== undefined && Number(row[mCols.ppFlag]) === 1) {
+          documents.push({
+            type: 'PP',
+            description: 'PERATURAN PERUSAHAAN (PP)',
+            location,
+            validFrom: null,
+            validUntil: null,
+            pic: null,
+            rawStatus: 'Aktif',
+            remainingDays: 0,
+            notes: null
+          });
+        }
+
+        if (mCols.wlkpAwal !== undefined || mCols.wlkpAkhir !== undefined) {
+          const vf = parseExcelDate(row[mCols.wlkpAwal]);
+          const vu = parseExcelDate(row[mCols.wlkpAkhir]);
+          if (vf || vu) {
+            documents.push({
+              type: 'WLKP',
+              description: 'WLKP KEMNAKER',
+              location,
+              validFrom: vf,
+              validUntil: vu,
+              pic: null,
+              rawStatus: 'Aktif',
+              remainingDays: 0,
+              notes: null
+            });
+          }
+        } else if (mCols.wlkpFlag !== undefined && (Number(row[mCols.wlkpFlag]) === 1 || row[mCols.periodeAwal] || row[mCols.periodeAkhir])) {
+          const vf = parseExcelDate(row[mCols.periodeAwal]);
+          const vu = parseExcelDate(row[mCols.periodeAkhir]);
+          documents.push({
+            type: 'WLKP',
+            description: 'WLKP KEMNAKER',
+            location,
+            validFrom: vf,
+            validUntil: vu,
+            pic: null,
+            rawStatus: 'Aktif',
+            remainingDays: 0,
+            notes: null
+          });
+        }
+
+        if (mCols.gensetFlag !== undefined && Number(row[mCols.gensetFlag]) === 1) {
+          const vf = parseExcelDate(row[mCols.gensetAwal]);
+          documents.push({
+            type: 'K3',
+            description: 'SERTIFIKASI K3 / GENSET',
+            location,
+            validFrom: vf,
+            validUntil: null,
+            pic: null,
+            rawStatus: 'Aktif',
+            remainingDays: 0,
+            notes: null
+          });
+        }
+
+        if (documents.length > 0) {
+          allData.push({
+            storeName: isHo ? null : storeName,
+            location,
+            entityName: 'Biensi',
+            documents
+          });
+        }
+      }
+      continue;
+    }
 
     // Ekstrak baris data di bawah header
     for (let r = listHeaderRow + 1; r < rawMatrix.length; r++) {

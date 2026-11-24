@@ -46,10 +46,24 @@ const parseFlexibleDate = (val) => {
 };
 
 const parseDecimal = (val) => {
-  if (!val) return 0;
-  if (typeof val === 'number') return val;
-  const cleanStr = String(val).replace(/[^0-9.-]+/g, '');
-  return parseFloat(cleanStr) || 0;
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  let s = String(val).trim();
+  if (!s) return 0;
+  const upper = s.toUpperCase();
+  if (['KLOP', 'CLOSING', 'NIHIL', 'NONE', 'CLEAR', 'AMAN', '-'].includes(upper)) return 0;
+  s = s.replace(/^(RP\.?|IDR)\s*/i, '').replace(/\s+/g, '');
+  if (!s || s === '-' || s === '0') return 0;
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) {
+    s = s.replace(/,/g, '');
+  } else if (/^-?\d+,\d+$/.test(s)) {
+    s = s.replace(',', '.');
+  } else {
+    s = s.replace(/[^0-9.-]+/g, '');
+  }
+  return parseFloat(s) || 0;
 };
 
 const toIntSafe = (val) => {
@@ -107,9 +121,21 @@ const importBulkSP = async (filePath) => {
     targetSheets = [workbook.SheetNames[0]];
   }
 
+  let hasSpRekapSheet = false;
+
   for (const sheetName of targetSheets) {
     const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
     if (rawMatrix.length === 0) continue;
+
+    // Lewati sheet Rekap SP Toko (TAHUN | BULAN | KATEGORI) saat memindai detail SP, dan tandai agar diimpor juga ke spAggregateMonthly
+    const isRekapSheet = rawMatrix.slice(0, 12).some(row => {
+      const rowStr = (row || []).map(v => String(v || '').toUpperCase()).join(' ');
+      return rowStr.includes('TAHUN') && rowStr.includes('BULAN') && rowStr.includes('KATEGORI');
+    });
+    if (isRekapSheet) {
+      hasSpRekapSheet = true;
+      continue;
+    }
 
     let col = {};
     let headerRow = -1;
@@ -191,7 +217,11 @@ const importBulkSP = async (filePath) => {
     }
   }
   if (allData.length === 0) throw new Error('Gagal. Pastikan format SP (Toko/HO) benar.');
-  return await repository.processBulkSP(allData);
+  const spResult = await repository.processBulkSP(allData);
+  if (hasSpRekapSheet) {
+    await importSpTokoRekap(filePath).catch(() => null);
+  }
+  return spResult;
 };
 
 // === 2. SERVICE UNTUK IMPORT FRAUD ===
@@ -332,7 +362,8 @@ const importBulkBipartit = async (filePath) => {
       }
     }
 
-    if (col.name === undefined) continue;
+    const hasBipartitSignal = col.bipartit !== undefined || col.mediasi !== undefined || col.pihak3 !== undefined || col.categoryCol !== undefined;
+    if (col.name === undefined || !hasBipartitSignal) continue;
 
     for (let r = dataStartRow; r < rawMatrix.length; r++) {
       const row = rawMatrix[r] || [];
@@ -353,10 +384,13 @@ const importBulkBipartit = async (filePath) => {
         else if (catVal.includes('PIHAK')) category = 'Pihak ke 3';
         else if (catVal.includes('PHI')) category = 'PHI';
         else if (catVal.includes('BIPARTIT')) category = 'Bipartit';
+        else if (catVal.includes('SELESAI') || catVal.includes('CLOSE')) category = 'Selesai';
       }
       else if (ketUpper.includes('MEDIASI') || ketUpper.includes('DISNAKER')) category = 'Mediasi';
       else if (ketUpper.includes('PIHAK')) category = 'Pihak ke 3';
       else if (ketUpper.includes('PHI')) category = 'PHI';
+      else if (ketUpper.includes('BIPARTIT')) category = 'Bipartit';
+      else if (ketUpper.includes('SELESAI') || ketUpper.includes('CLOSE')) category = 'Selesai';
 
       const rawStatus = col.status !== undefined && row[col.status] ? String(row[col.status]).trim() : null;
       const parsedStart = parseFlexibleDate(row[col.startDate]);
@@ -369,6 +403,7 @@ const importBulkBipartit = async (filePath) => {
         category: category,
         status: rawStatus,
         keterangan: ketText,
+        hasStartDate: Boolean(parsedStart),
         startDate: parsedStart || parsedEnd, // Fallback jika Periode Awal kosong
         endDate: parsedEnd
       });
@@ -455,8 +490,8 @@ const importSpTokoRekap = async (filePath) => {
 
       const totalSpIssued = toIntSafe(row[32 + shift]) || (tataTertibCount + nonTataTertibCount);
 
-      // Pengaman upload bulanan: lewati jika bulan tersebut belum ada data sama sekali
-      if (totalEmployees === 0 && totalSpIssued === 0) continue;
+      // Pengaman upload bulanan: lewati jika bulan tersebut belum ada data karyawan toko sama sekali
+      if (totalEmployees === 0) continue;
 
       const breakdown = {
         tataTertib: { sp1: ttSp1, sp2: ttSp2, sp3: ttSp3, phk: ttPhk },
