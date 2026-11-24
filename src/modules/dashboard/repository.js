@@ -87,7 +87,9 @@ const getAttendanceByPeriod = async (periodId, scope = 'Corporate', year = null)
     const latestAttPeriod = await prisma.reportingPeriod.findFirst({
       where: {
         year: parseInt(year, 10),
-        attendanceAggregate: { some: {} }
+        attendanceAggregate: {
+          some: whereClause.scope ? { scope: whereClause.scope } : {}
+        }
       },
       orderBy: { month: 'desc' }
     });
@@ -224,16 +226,10 @@ const getIndustrialAndSpSummary = async (year, month = null, spYear = null) => {
   const isAllSpYear = String(spYear || '').toUpperCase() === 'ALL';
   const targetSpYear = !isAllSpYear ? (parseInt(spYear, 10) || numYear) : null;
 
-  const [spStoreRecords, allDiscCases, irCases, overdueContracts, compliances] = await Promise.all([
+  const [allSpStoreRecords, allDiscCases, irCases, overdueContracts, compliances] = await Promise.all([
     prisma.spAggregateMonthly.findMany({
       where: {
-        scope: 'STORE',
-        ...(targetSpYear ? {
-          period: {
-            year: targetSpYear,
-            ...(targetSpYear === numYear && month ? { month: { lte: numMonth } } : {})
-          }
-        } : {})
+        scope: 'STORE'
       },
       include: { period: true }
     }),
@@ -248,16 +244,10 @@ const getIndustrialAndSpSummary = async (year, month = null, spYear = null) => {
       where: {
         OR: [
           {
-            startDate: {
-              gte: new Date(Date.UTC(numYear - 1, 11, 30)),
-              lte: refDate
-            }
+            startDate: { lte: refDate }
           },
           {
-            endDate: {
-              gte: new Date(Date.UTC(numYear, 0, 1)),
-              lte: new Date(Date.UTC(numYear, 11, 31, 23, 59, 59))
-            }
+            endDate: { lte: refDate }
           },
           {
             startDate: null,
@@ -336,10 +326,49 @@ const getIndustrialAndSpSummary = async (year, month = null, spYear = null) => {
     return { corporate, store, hq };
   };
 
-  // 1. Rekap Keseluruhan (All-Time tanpa filter tahun)
-  const allTimeSummary = summarizeDisciplinaryList(allDiscCases, today);
+  // Helper menggabungkan spAggregateMonthly (Rekap SP Toko) ke dalam objek summary jika tahun tersebut tidak memiliki detail SP Toko di disciplinaryCase
+  const applyStoreRekapToSummary = (summaryObj, rekapRows, activeCutoffMonth = 12, isCurrentOrTargetYear = true) => {
+    if (!rekapRows || rekapRows.length === 0 || summaryObj.store.total > 0) return summaryObj;
+    rekapRows.forEach(r => {
+      const m = r.period?.month || 1;
+      const brk = r.breakdown || {};
+      const phkCnt = brk.bySpLevel?.phk || 0;
+      const nonPhk = Math.max(0, r.totalSpIssued - phkCnt);
 
-  // 2. Pecahan Per Tahun (untuk dropdown / chart perbandingan tahunan)
+      summaryObj.store.total += r.totalSpIssued;
+      summaryObj.store.tataTertib += r.tataTertibCount;
+      summaryObj.store.nonTataTertib += r.nonTataTertibCount;
+
+      if (isCurrentOrTargetYear && m > activeCutoffMonth - 6) {
+        summaryObj.store.spAktif += nonPhk;
+        summaryObj.store.spNonAktif += phkCnt;
+      } else {
+        summaryObj.store.spNonAktif += r.totalSpIssued;
+      }
+
+      if (brk.bySpLevel) {
+        summaryObj.store.sp1 += (brk.bySpLevel.sp1 || 0);
+        summaryObj.store.sp2 += (brk.bySpLevel.sp2 || 0);
+        summaryObj.store.sp3 += (brk.bySpLevel.sp3 || 0);
+      }
+      if (brk.byRegion) {
+        summaryObj.store.barat += (brk.byRegion.barat || 0);
+        summaryObj.store.timur += (brk.byRegion.timur || 0);
+      }
+    });
+
+    summaryObj.corporate.total = summaryObj.store.total + summaryObj.hq.total;
+    summaryObj.corporate.spAktif = summaryObj.store.spAktif + summaryObj.hq.spAktif;
+    summaryObj.corporate.spNonAktif = summaryObj.store.spNonAktif + summaryObj.hq.spNonAktif;
+    summaryObj.corporate.tataTertib = summaryObj.store.tataTertib + summaryObj.hq.tataTertib;
+    summaryObj.corporate.nonTataTertib = summaryObj.store.nonTataTertib + summaryObj.hq.nonTataTertib;
+    summaryObj.corporate.sp1 = summaryObj.store.sp1 + summaryObj.hq.sp1;
+    summaryObj.corporate.sp2 = summaryObj.store.sp2 + summaryObj.hq.sp2;
+    summaryObj.corporate.sp3 = summaryObj.store.sp3 + summaryObj.hq.sp3;
+    return summaryObj;
+  };
+
+  // 1. Pecahan Per Tahun (gabungan disciplinaryCase + spAggregateMonthly)
   const casesByYearMap = {};
   allDiscCases.forEach(c => {
     const y = c.startDate ? new Date(c.startDate).getUTCFullYear() : numYear;
@@ -347,74 +376,82 @@ const getIndustrialAndSpSummary = async (year, month = null, spYear = null) => {
     casesByYearMap[y].push(c);
   });
 
-  const byYear = Object.keys(casesByYearMap)
-    .map(Number)
-    .sort((a, b) => b - a)
-    .map(y => {
-      const yearRef = y === numYear ? refDate : (y < today.getUTCFullYear() ? new Date(Date.UTC(y, 11, 31, 23, 59, 59)) : today);
-      const summary = summarizeDisciplinaryList(casesByYearMap[y], yearRef);
-      return {
-        year: y,
-        total: summary.corporate.total,
-        spAktif: summary.corporate.spAktif,
-        spNonAktif: summary.corporate.spNonAktif,
-        store: summary.store.total,
-        hq: summary.hq.total,
-        tataTertib: summary.corporate.tataTertib,
-        nonTataTertib: summary.corporate.nonTataTertib,
-        detail: summary
-      };
-    });
+  const rekapByYearMap = {};
+  allSpStoreRecords.forEach(r => {
+    const y = r.period?.year || numYear;
+    if (!rekapByYearMap[y]) rekapByYearMap[y] = [];
+    rekapByYearMap[y].push(r);
+  });
+
+  const allSpYears = Array.from(new Set([
+    ...Object.keys(casesByYearMap).map(Number),
+    ...Object.keys(rekapByYearMap).map(Number)
+  ])).sort((a, b) => b - a);
+
+  const byYear = allSpYears.map(y => {
+    const yearRef = y === numYear ? refDate : (y < today.getUTCFullYear() ? new Date(Date.UTC(y, 11, 31, 23, 59, 59)) : today);
+    const summary = summarizeDisciplinaryList(casesByYearMap[y] || [], yearRef);
+    const yearRekapRows = (rekapByYearMap[y] || []).filter(r => (y === numYear && month) ? (r.period?.month || 1) <= numMonth : true);
+    applyStoreRekapToSummary(summary, yearRekapRows, y === numYear ? numMonth : 12, y >= numYear);
+    return {
+      year: y,
+      total: summary.corporate.total,
+      spAktif: summary.corporate.spAktif,
+      spNonAktif: summary.corporate.spNonAktif,
+      store: summary.store.total,
+      hq: summary.hq.total,
+      tataTertib: summary.corporate.tataTertib,
+      nonTataTertib: summary.corporate.nonTataTertib,
+      detail: summary
+    };
+  });
+
+  // 2. Rekap Keseluruhan (All-Time tanpa filter tahun, mencakup Rekap SP Toko untuk tahun yang tidak ada di disciplinaryCase)
+  const allTimeSummary = summarizeDisciplinaryList(allDiscCases, today);
+  allSpYears.forEach(y => {
+    const hasStoreDetailInYear = (casesByYearMap[y] || []).some(c => c.storeId !== null);
+    if (!hasStoreDetailInYear && rekapByYearMap[y]?.length > 0) {
+      const dummyYearSummary = summarizeDisciplinaryList([], today);
+      applyStoreRekapToSummary(dummyYearSummary, rekapByYearMap[y], y === numYear ? numMonth : 12, y >= today.getUTCFullYear());
+      allTimeSummary.store.total += dummyYearSummary.store.total;
+      allTimeSummary.store.spAktif += dummyYearSummary.store.spAktif;
+      allTimeSummary.store.spNonAktif += dummyYearSummary.store.spNonAktif;
+      allTimeSummary.store.tataTertib += dummyYearSummary.store.tataTertib;
+      allTimeSummary.store.nonTataTertib += dummyYearSummary.store.nonTataTertib;
+      allTimeSummary.store.sp1 += dummyYearSummary.store.sp1;
+      allTimeSummary.store.sp2 += dummyYearSummary.store.sp2;
+      allTimeSummary.store.sp3 += dummyYearSummary.store.sp3;
+      allTimeSummary.store.barat += dummyYearSummary.store.barat;
+      allTimeSummary.store.timur += dummyYearSummary.store.timur;
+    }
+  });
+  allTimeSummary.corporate.total = allTimeSummary.store.total + allTimeSummary.hq.total;
+  allTimeSummary.corporate.spAktif = allTimeSummary.store.spAktif + allTimeSummary.hq.spAktif;
+  allTimeSummary.corporate.spNonAktif = allTimeSummary.store.spNonAktif + allTimeSummary.hq.spNonAktif;
+  allTimeSummary.corporate.tataTertib = allTimeSummary.store.tataTertib + allTimeSummary.hq.tataTertib;
+  allTimeSummary.corporate.nonTataTertib = allTimeSummary.store.nonTataTertib + allTimeSummary.hq.nonTataTertib;
+  allTimeSummary.corporate.sp1 = allTimeSummary.store.sp1 + allTimeSummary.hq.sp1;
+  allTimeSummary.corporate.sp2 = allTimeSummary.store.sp2 + allTimeSummary.hq.sp2;
+  allTimeSummary.corporate.sp3 = allTimeSummary.store.sp3 + allTimeSummary.hq.sp3;
 
   // 3. Data Utama Sesuai Filter spYear ('ALL' atau tahun terpilih)
-  const filteredDiscCases = isAllSpYear
-    ? allDiscCases
-    : allDiscCases.filter(c => {
-        if (!c.startDate) return false;
-        const d = new Date(c.startDate);
-        if (d.getUTCFullYear() !== targetSpYear) return false;
-        if (targetSpYear === numYear && month) return d <= refDate;
-        return true;
-      });
-
-  const activeCompareDate = isAllSpYear ? today : (targetSpYear === numYear ? refDate : new Date(Date.UTC(targetSpYear, 11, 31, 23, 59, 59)));
-  const activeSummary = summarizeDisciplinaryList(filteredDiscCases, activeCompareDate);
-
-  // Jika masih ada data legacy di spAggregateMonthly (dan tidak ada detail di disciplinaryCase)
-  if (spStoreRecords.length > 0 && activeSummary.store.total === 0) {
-    spStoreRecords.forEach(r => {
-      const m = r.period?.month || 1;
-      const brk = r.breakdown || {};
-      const phkCnt = brk.bySpLevel?.phk || 0;
-      const nonPhk = Math.max(0, r.totalSpIssued - phkCnt);
-
-      activeSummary.store.total += r.totalSpIssued;
-      activeSummary.store.tataTertib += r.tataTertibCount;
-      activeSummary.store.nonTataTertib += r.nonTataTertibCount;
-
-      if (m > numMonth - 6) {
-        activeSummary.store.spAktif += nonPhk;
-        activeSummary.store.spNonAktif += phkCnt;
-      } else {
-        activeSummary.store.spNonAktif += r.totalSpIssued;
-      }
-
-      if (brk.bySpLevel) {
-        activeSummary.store.sp1 += (brk.bySpLevel.sp1 || 0);
-        activeSummary.store.sp2 += (brk.bySpLevel.sp2 || 0);
-        activeSummary.store.sp3 += (brk.bySpLevel.sp3 || 0);
-      }
-      if (brk.byRegion) {
-        activeSummary.store.barat += (brk.byRegion.barat || 0);
-        activeSummary.store.timur += (brk.byRegion.timur || 0);
-      }
+  let activeSummary;
+  if (isAllSpYear) {
+    activeSummary = JSON.parse(JSON.stringify(allTimeSummary));
+  } else {
+    const filteredDiscCases = allDiscCases.filter(c => {
+      if (!c.startDate) return false;
+      const d = new Date(c.startDate);
+      if (d.getUTCFullYear() !== targetSpYear) return false;
+      if (targetSpYear === numYear && month) return d <= refDate;
+      return true;
     });
-
-    activeSummary.corporate.total = activeSummary.store.total + activeSummary.hq.total;
-    activeSummary.corporate.spAktif = activeSummary.store.spAktif + activeSummary.hq.spAktif;
-    activeSummary.corporate.spNonAktif = activeSummary.store.spNonAktif + activeSummary.hq.spNonAktif;
-    activeSummary.corporate.tataTertib = activeSummary.store.tataTertib + activeSummary.hq.tataTertib;
-    activeSummary.corporate.nonTataTertib = activeSummary.store.nonTataTertib + activeSummary.hq.nonTataTertib;
+    const activeCompareDate = targetSpYear === numYear ? refDate : new Date(Date.UTC(targetSpYear, 11, 31, 23, 59, 59));
+    activeSummary = summarizeDisciplinaryList(filteredDiscCases, activeCompareDate);
+    const spStoreRecords = (rekapByYearMap[targetSpYear] || []).filter(r =>
+      (targetSpYear === numYear && month) ? (r.period?.month || 1) <= numMonth : true
+    );
+    applyStoreRekapToSummary(activeSummary, spStoreRecords, targetSpYear === numYear ? numMonth : 12, targetSpYear >= numYear);
   }
 
   const countDisputes = (list) => {
@@ -433,7 +470,7 @@ const getIndustrialAndSpSummary = async (year, month = null, spYear = null) => {
         res.mediasi++;
       } else if (cat.includes('PHI')) {
         res.phi++;
-      } else {
+      } else if (cat.includes('BIPARTIT')) {
         res.bipartit++;
       }
     });
@@ -544,6 +581,31 @@ const getIndustrialAndSpSummary = async (year, month = null, spYear = null) => {
   };
 };
 
+const getAvailableYears = async () => {
+  const [periods, movements, discCases, irCases] = await Promise.all([
+    prisma.reportingPeriod.findMany({ select: { year: true }, distinct: ['year'] }),
+    prisma.employeeMovement.findMany({ select: { movementDate: true } }),
+    prisma.disciplinaryCase.findMany({ select: { startDate: true } }),
+    prisma.industrialRelationCase.findMany({ select: { startDate: true, endDate: true } })
+  ]);
+
+  const yearSet = new Set();
+  const addYear = (y) => {
+    const n = Number(y);
+    if (Number.isInteger(n) && n >= 2020 && n <= 2100) yearSet.add(n);
+  };
+
+  periods.forEach(p => addYear(p.year));
+  movements.forEach(m => { if (m.movementDate) addYear(new Date(m.movementDate).getUTCFullYear()); });
+  discCases.forEach(c => { if (c.startDate) addYear(new Date(c.startDate).getUTCFullYear()); });
+  irCases.forEach(c => {
+    if (c.startDate) addYear(new Date(c.startDate).getUTCFullYear());
+    if (c.endDate) addYear(new Date(c.endDate).getUTCFullYear());
+  });
+
+  return Array.from(yearSet).sort((a, b) => b - a);
+};
+
 module.exports = {
   getPeriodByDate,
   getPeriodById,
@@ -555,5 +617,6 @@ module.exports = {
   getTurnoverMovements,
   getExpiringContracts,
   getLatestPeriodByYear,
-  getIndustrialAndSpSummary
+  getIndustrialAndSpSummary,
+  getAvailableYears
 };

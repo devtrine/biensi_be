@@ -130,9 +130,14 @@ const processBulkImport = async (rawData) => {
       // 1. Validasi NIK: Bersihkan petik Excel ('A1516...) dan spasi
       let empNo = String(row.employeeNo || '').trim().replace(/^['"`\s]+/, '').toUpperCase();
 
-      // Lewati baris kosong total atau baris ringkasan/footer Excel (seperti 'TOTAL', '1', 'SUM')
-      if (!empNo || empNo === 'TOTAL' || empNo === '1' || empNo === 'SUM') {
-        if (row.fullName && row.fullName !== 'TIDAK ADA NAMA' && row.fullName !== 'TOTAL') {
+      // Lewati baris kosong total atau baris ringkasan/footer Excel (seperti 'TOTAL', '1', 'SUM', atau baris indeks angka [1, 2, 3...])
+      const isSummaryOrIndexRow =
+        !empNo ||
+        ['TOTAL', 'SUM', 'SUBTOTAL', 'RATA-RATA'].includes(empNo) ||
+        (empNo === '1' && (!fullName || fullName === 'TIDAK ADA NAMA' || fullName.toUpperCase() === 'TOTAL' || /^\d+$/.test(fullName))) ||
+        (/^\d+$/.test(empNo) && /^\d+$/.test(fullName));
+      if (isSummaryOrIndexRow) {
+        if (!empNo && fullName && fullName !== 'TIDAK ADA NAMA' && fullName.toUpperCase() !== 'TOTAL' && !/^\d+$/.test(fullName)) {
           results.gagal++;
           results.errorList.push(`Baris ${row.rowNumber || 'Data'} (Nama: ${row.fullName}): NIK kosong atau format NIK tidak valid`);
         }
@@ -285,6 +290,9 @@ const processBulkImport = async (rawData) => {
 
       const normalizedGender = normalizeGender(row.gender);
       const normalizedEducation = normalizeText(row.educationLevel);
+      const periodCutoffDate = (row.periodYear && row.periodMonth)
+        ? new Date(Date.UTC(row.periodYear, row.periodMonth, 0, 23, 59, 59))
+        : new Date();
 
       const basePayload = {
         employeeNo: empNo,
@@ -295,7 +303,7 @@ const processBulkImport = async (rawData) => {
         employmentType: empType,
         joinDate: validJoinDate,
         endDate: validEndDate,
-        status: (validEndDate && validEndDate < new Date()) ? 'INACTIVE' : 'ACTIVE',
+        status: (validEndDate && validEndDate < periodCutoffDate) ? 'INACTIVE' : 'ACTIVE',
         bpjsKetenagakerjaan: Boolean(row.bpjsKetenagakerjaan),
         bpjsKesehatan: Boolean(row.bpjsKesehatan),
         baseSalary: parsedSalary

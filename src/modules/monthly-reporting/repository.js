@@ -129,7 +129,7 @@ const getOrCreateStore = async (storeName, region = null, storeType = null) => {
 };
 
 const getAttendanceAggregate = async (periodId) => {
-  return await prisma.attendanceAggregateMonthly.findUnique({ where: { periodId } });
+  return await prisma.attendanceAggregateMonthly.findFirst({ where: { periodId } });
 };
 
 // Fungsi update actual labour cost per karyawan (dipanggil Promise.all dari service)
@@ -142,7 +142,8 @@ const updateSnapshotActualCost = async (periodId, employeeId, actualAmount) => {
 
 // Tarik data NIK master untuk "Kamus In-Memory"
 const getAllEmployeesNik = async () => {
-  return await prisma.employee.findMany({ select: { id: true, nik: true } });
+  const list = await prisma.employee.findMany({ select: { id: true, employeeNo: true } });
+  return list.map(e => ({ id: e.id, employeeNo: e.employeeNo, nik: e.employeeNo }));
 };
 
 const bulkCreateSales = async (dataArray) => {
