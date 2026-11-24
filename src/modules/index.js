@@ -1,5 +1,9 @@
 const express = require('express');
+const fs = require('fs');
 const router = express.Router();
+const { authenticate, checkPermission } = require('../middleware/auth');
+const uploader = require('../middleware/upload');
+const { validateImportFile } = require('../utils/importValidator');
 
 const authRoutes = require('./auth/routes');
 const administrationRoutes = require('./administration/routes')
@@ -28,5 +32,28 @@ router.use('/movement', movemntRoutes);
 router.use('/disciplinary', disciplinaryRoutes);
 router.use('/compilance', compilanceRoutes);
 router.use('/dashboard', dashboardRoutes);
+
+// Endpoint khusus dry-run validasi (read-only, tidak pernah menulis ke DB)
+router.post(
+  '/import/validate/:moduleKey',
+  authenticate,
+  checkPermission('import', 'create'),
+  uploader.upload.single('file'),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, message: 'File Excel wajib diunggah untuk validasi.' });
+      }
+      const report = await validateImportFile(req.params.moduleKey, req.file.path, req.file.originalname);
+      return res.status(200).json(report);
+    } catch (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    } finally {
+      if (req.file && fs.existsSync(req.file.path)) {
+        try { fs.unlinkSync(req.file.path); } catch (e) {}
+      }
+    }
+  }
+);
 
 module.exports = router;

@@ -1,4 +1,5 @@
 const service = require('./service');
+const { runDryRunOrGuard } = require('../../utils/importValidator');
 const fs = require('fs');
 
 const getAllMovements = async (req, res) => {
@@ -46,6 +47,9 @@ const deleteMovement = async (req, res) => {
 const uploadBulkMovement = async (req, res) => {
   try {
     if (!req.file) throw new Error("File Excel turnover wajib diunggah!");
+
+    const guard = await runDryRunOrGuard(req, res, 'movement');
+    if (guard.handled) return;
     
     // Panggil service dan tangkap return-nya
     const result = await service.importBulkMovement(req.file.path);
