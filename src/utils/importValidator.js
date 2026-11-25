@@ -2054,11 +2054,16 @@ const validateImportFile = async (moduleKey, filePath, originalFilename = '', op
   return report;
 };
 
+const isTruthyFlag = (val) => {
+  if (Array.isArray(val)) return val.some(v => String(v || '').trim().toLowerCase() === 'true');
+  return String(val || '').trim().toLowerCase() === 'true';
+};
+
 // Helper controller seragam untuk ?dryRun=true, pre-commit guard, dan kebijakan multi-bulan
 const runDryRunOrGuard = async (req, res, moduleKey) => {
   const isDryRun = String(req.query.dryRun || '').toLowerCase() === 'true';
   const confirmStep = Number(req.body?.confirmStep ?? req.query?.confirmStep ?? 0);
-  const allowReimport = String(req.body?.allowReimport ?? req.query?.allowReimport ?? '').toLowerCase() === 'true';
+  const allowReimport = isTruthyFlag(req.body?.allowReimport) || isTruthyFlag(req.query?.allowReimport);
   const validation = await validateImportFile(moduleKey, req.file.path, req.file.originalname, { confirmStep });
   const periodPolicy = validation.periodPolicy || null;
 
