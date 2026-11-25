@@ -585,26 +585,19 @@ const getIndustrialAndSpSummary = async (year, month = null, spYear = null) => {
 };
 
 const getAvailableYears = async () => {
-  const [periods, movements, discCases, irCases] = await Promise.all([
-    prisma.reportingPeriod.findMany({
-      where: {
-        year: { gte: 2020, lte: 2100 },
-        OR: [
-          { employeeSnaps: { some: {} } },
-          { salesMonthly: { some: {} } },
-          { attendanceAggregate: { some: {} } },
-          { spAggregateMonthly: { some: {} } },
-          { kpiPositions: { some: {} } },
-          { importBatches: { some: {} } }
-        ]
-      },
-      select: { year: true },
-      distinct: ['year']
-    }),
-    prisma.employeeMovement.findMany({ select: { movementDate: true } }),
-    prisma.disciplinaryCase.findMany({ select: { startDate: true } }),
-    prisma.industrialRelationCase.findMany({ select: { startDate: true } })
-  ]);
+  const periods = await prisma.reportingPeriod.findMany({
+    where: {
+      year: { gte: 2020, lte: 2100 },
+      OR: [
+        { employeeSnaps: { some: {} } },
+        { salesMonthly: { some: {} } },
+        { attendanceAggregate: { some: {} } },
+        { spAggregateMonthly: { some: {} } }
+      ]
+    },
+    select: { year: true },
+    distinct: ['year']
+  });
 
   const yearSet = new Set();
   const addYear = (y) => {
@@ -613,9 +606,15 @@ const getAvailableYears = async () => {
   };
 
   periods.forEach(p => addYear(p.year));
-  movements.forEach(m => { if (m.movementDate) addYear(new Date(m.movementDate).getUTCFullYear()); });
-  discCases.forEach(c => { if (c.startDate) addYear(new Date(c.startDate).getUTCFullYear()); });
-  irCases.forEach(c => { if (c.startDate) addYear(new Date(c.startDate).getUTCFullYear()); });
+
+  if (yearSet.size === 0) {
+    const [movements, discCases] = await Promise.all([
+      prisma.employeeMovement.findMany({ select: { movementDate: true } }),
+      prisma.disciplinaryCase.findMany({ select: { startDate: true } })
+    ]);
+    movements.forEach(m => { if (m.movementDate) addYear(new Date(m.movementDate).getUTCFullYear()); });
+    discCases.forEach(c => { if (c.startDate) addYear(new Date(c.startDate).getUTCFullYear()); });
+  }
 
   return Array.from(yearSet).sort((a, b) => b - a);
 };

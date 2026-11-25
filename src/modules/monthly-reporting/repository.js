@@ -24,9 +24,7 @@ const getAllPeriods = async () => {
         { employeeSnaps: { some: {} } },
         { salesMonthly: { some: {} } },
         { attendanceAggregate: { some: {} } },
-        { spAggregateMonthly: { some: {} } },
-        { kpiPositions: { some: {} } },
-        { importBatches: { some: {} } }
+        { spAggregateMonthly: { some: {} } }
       ]
     },
     orderBy: [{ year: 'desc' }, { month: 'desc' }]
