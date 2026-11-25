@@ -1,19 +1,18 @@
-const service = require('./service');
-const { runDryRunOrGuard } = require('../../utils/importValidator');
-const xlsx = require('xlsx');
 const fs = require('fs');
+const xlsx = require('xlsx');
 const { success } = require('zod');
+const service = require('./service');
+const repository = require('./repository');
 const { getAttendanceAggregate } = require('./repository');
-const repository = require('./repository')
+const { runDryRunOrGuard } = require('../../utils/importValidator');
+const { IMPORT_MODULES, logImportBatch } = require('../../utils/importBatchHelper');
 
 const parseExcel = (filePath) => {
   const workbook = xlsx.readFile(filePath);
-  const sheetName = workbook.SheetNames[0]; 
-  const rawSheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 }); // Baca sebagai Array 2D
-  
+  const sheetName = workbook.SheetNames[0];
+  const rawSheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+
   let headerRowIndex = -1;
-  
-  // 1. Cari baris yang mengandung kata "BULAN"
   for (let i = 0; i < rawSheet.length; i++) {
     if (rawSheet[i].some(cell => typeof cell === 'string' && cell.toUpperCase().includes('BULAN'))) {
       headerRowIndex = i;
@@ -23,37 +22,33 @@ const parseExcel = (filePath) => {
 
   if (headerRowIndex === -1) throw new Error("Format tidak dikenali, tidak ada kolom 'BULAN'");
 
-  // 2. Jadikan baris itu sebagai Header, dan ambil data di bawahnya
   const headers = rawSheet[headerRowIndex];
   const dataRows = rawSheet.slice(headerRowIndex + 1);
 
-  // 3. Mapping kembali menjadi JSON yang bersih (Abaikan kolom NaN/kosong)
   const cleanData = dataRows.map(row => {
-    let obj = {};
+    const obj = {};
     headers.forEach((header, index) => {
       if (header && typeof header === 'string') {
-        // Hapus spasi berlebih dari nama header
         const cleanHeader = header.replace(/\s+/g, ' ').trim().toUpperCase();
         obj[cleanHeader] = row[index];
       }
     });
     return obj;
-  }).filter(row => row['BULAN']); // Pastikan hanya baris yang punya nama bulan yang diambil
+  }).filter(row => row['BULAN']);
 
   return cleanData;
 };
 
 const parseExcel2D = (filePath) => {
   const workbook = xlsx.readFile(filePath);
-  const sheetName = workbook.SheetNames[0]; 
-  // { header: 1 } artinya jadikan Array di dalam Array, persis seperti grid Excel
-  return xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 }); 
+  const sheetName = workbook.SheetNames[0];
+  return xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
 };
 
 const createPeriod = async (req, res) => {
   try {
     const data = await service.openNewPeriod(req.body.year, req.body.month);
-    res.status(201).json({ success: true, message: `Periode berhasil dibuka`, data });
+    res.status(201).json({ success: true, message: 'Periode berhasil dibuka', data });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
@@ -96,16 +91,11 @@ const getAttendance = async (req, res) => {
   }
 };
 
-// Mengambil data sales
 const getSales = async (req, res) => {
   try {
     const { periodId } = req.params;
     const data = await service.getSales(periodId);
-    res.status(200).json({
-      success: true,
-      count: data.length,
-      data
-    });
+    res.status(200).json({ success: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -114,7 +104,7 @@ const getSales = async (req, res) => {
 const generateMonthlySnapshot = async (req, res) => {
   try {
     const data = await service.generateSnapshot(req.params.periodId);
-    res.status(200).json({ success: true, message: `Snapshot berhasil di-generate`, data });
+    res.status(200).json({ success: true, message: 'Snapshot berhasil di-generate', data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -129,46 +119,51 @@ const getSummary = async (req, res) => {
   }
 };
 
-// --- HANDLER UPLOAD DENGAN PARSER ---
+// --- HANDLER UPLOAD LEGACY ---
 
 const uploadAttendance = async (req, res) => {
   try {
-    if (!req.file) throw new Error("File Excel absensi wajib diunggah!");
+    if (!req.file) throw new Error('File Excel absensi wajib diunggah!');
     const rawData = parseExcel(req.file.path);
     const data = await service.importAttendanceAggregate(rawData);
-    res.status(201).json({ success: true, message: `Data absensi global ter-import`, data, fileName: req.file.filename });
+    res.status(201).json({ success: true, message: 'Data absensi global ter-import', data, fileName: req.file.originalname });
   } catch (error) {
-    if (req.file) fs.unlinkSync(req.file.path);
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+    }
     res.status(400).json({ success: false, message: error.message });
   }
 };
 
 const uploadActualLabourCost = async (req, res) => {
   try {
-    if (!req.file) throw new Error("File Excel labour cost wajib diunggah!");
+    if (!req.file) throw new Error('File Excel labour cost wajib diunggah!');
     const rawData = parseExcel(req.file.path);
-    // Ganti pemanggilan service
     const data = await service.importActualLabourCost(req.params.periodId, rawData);
-    res.status(201).json({ success: true, message: `Berhasil update gaji aktual untuk ${data.imported} karyawan`, fileName: req.file.filename });
+    res.status(201).json({ success: true, message: `Berhasil update gaji aktual untuk ${data.imported} karyawan`, fileName: req.file.originalname });
   } catch (error) {
-    if (req.file) fs.unlinkSync(req.file.path);
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+    }
     res.status(400).json({ success: false, message: error.message });
   }
 };
 
 const uploadSales = async (req, res) => {
   try {
-    if (!req.file) throw new Error("File Excel sales wajib diunggah!");
+    if (!req.file) throw new Error('File Excel sales wajib diunggah!');
     const rawData = parseExcel(req.file.path);
     const data = await service.importSales(req.params.periodId, rawData);
-    
-    res.status(201).json({ 
-      success: true, 
+
+    res.status(201).json({
+      success: true,
       message: `Berhasil import ${data.imported} data sales`,
-      fileName: req.file.filename
+      fileName: req.file.originalname
     });
   } catch (error) {
-    if (req.file) fs.unlinkSync(req.file.path);
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+    }
     res.status(400).json({ success: false, message: error.message });
   }
 };
@@ -176,28 +171,23 @@ const uploadSales = async (req, res) => {
 const getActiveStorePerformance = async (req, res) => {
   try {
     const allPeriods = await repository.getAllPeriods();
-    
     if (allPeriods.length === 0) {
-      return res.status(404).json({ success: false, message: "Belum ada data periode." });
+      return res.status(404).json({ success: false, message: 'Belum ada data periode.' });
     }
-    
-    // Ambil ID dari periode paling atas/terbaru
-    const activePeriodId = allPeriods[0].id; 
-    
+
+    const activePeriodId = allPeriods[0].id;
     const result = await service.getStorePerformanceDashboard(activePeriodId);
-    result.periodId = activePeriodId; // Sisipkan ID agar Frontend tahu ini data bulan apa
-    
+    result.periodId = activePeriodId;
+
     res.status(200).json(result);
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Fungsi 2: Filter Historis (Bulan Spesifik berdasarkan URL)
 const getStorePerformanceByPeriod = async (req, res) => {
   try {
-    const { periodId } = req.params; 
-    
+    const { periodId } = req.params;
     const result = await service.getStorePerformanceDashboard(periodId);
     result.periodId = periodId;
 
@@ -207,16 +197,18 @@ const getStorePerformanceByPeriod = async (req, res) => {
   }
 };
 
+// --- HANDLER UPLOAD UNIVERSAL (GUARD + IMPORT BATCH LOG) ---
+
 const uploadAttendanceUniversal = async (req, res) => {
+  const startedAt = new Date();
   try {
-    if (!req.file) throw new Error("File Excel wajib diunggah!");
+    if (!req.file) throw new Error('File Excel wajib diunggah!');
 
     const guard = await runDryRunOrGuard(req, res, 'attendance');
     if (guard.handled) return;
 
     const workbook = xlsx.readFile(req.file.path);
-    
-    // Cari semua sheet kehadiran (misal: kehadiran2026, kehadiran2025, kehadiran2024, dll)
+
     let targetSheets = workbook.SheetNames.filter(name => {
       const lower = name.toLowerCase();
       return lower.includes('kehadiran') || lower.includes('absensi') || lower.includes('attendance');
@@ -251,15 +243,33 @@ const uploadAttendanceUniversal = async (req, res) => {
       errorList.push('Tidak ada data absensi valid yang ditemukan pada sheet yang diproses.');
     }
 
+    const totalRows = guard.validation?.summary?.totalRows || totalImported;
+    if (totalImported > 0) {
+      await logImportBatch({
+        module: IMPORT_MODULES.ATTENDANCE,
+        periods: guard.periodPolicy?.periods || [],
+        fileName: req.file.originalname,
+        totalRows,
+        successRows: totalImported,
+        failedRows: errorList.length,
+        startedAt
+      });
+    }
+
     res.status(201).json({
       success: totalImported > 0 || errorList.length === 0,
       message: errorList.length > 0
         ? `Import Absensi Selesai! Sukses: ${totalImported}, Gagal: ${errorList.length}`
         : `Berhasil memproses ${totalImported} data absensi!`,
+      data: {
+        fileName: req.file.originalname,
+        periods: guard.periodPolicy?.periods || [],
+        imported: totalImported
+      },
       errors: errorList
     });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    res.status(error.statusCode || 400).json({ success: false, message: error.message });
   } finally {
     if (req.file && fs.existsSync(req.file.path)) {
       try { fs.unlinkSync(req.file.path); } catch (e) {}
@@ -268,16 +278,37 @@ const uploadAttendanceUniversal = async (req, res) => {
 };
 
 const uploadSalesUniversal = async (req, res) => {
+  const startedAt = new Date();
   try {
-    if (!req.file) throw new Error("File Excel wajib diunggah!");
+    if (!req.file) throw new Error('File Excel wajib diunggah!');
 
     const guard = await runDryRunOrGuard(req, res, 'sales');
     if (guard.handled) return;
 
     const data = await service.importSalesUniversal(req.file.path);
-    res.status(201).json({ success: true, message: `Berhasil memproses ${data.imported} data sales toko!` });
+    const totalRows = guard.validation?.summary?.totalRows || data.imported || 0;
+
+    await logImportBatch({
+      module: IMPORT_MODULES.SALES,
+      periods: guard.periodPolicy?.periods || [],
+      fileName: req.file.originalname,
+      totalRows,
+      successRows: data.imported || 0,
+      failedRows: 0,
+      startedAt
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `Berhasil memproses ${data.imported} data sales toko!`,
+      data: {
+        fileName: req.file.originalname,
+        periods: guard.periodPolicy?.periods || [],
+        imported: data.imported
+      }
+    });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    res.status(error.statusCode || 400).json({ success: false, message: error.message });
   } finally {
     if (req.file && fs.existsSync(req.file.path)) {
       try { fs.unlinkSync(req.file.path); } catch (e) {}
@@ -285,9 +316,21 @@ const uploadSalesUniversal = async (req, res) => {
   }
 };
 
-module.exports = { 
-  createPeriod, getAllPeriods, generateMonthlySnapshot, uploadAttendance,
-  uploadActualLabourCost, uploadSales, getSummary, uploadAttendanceUniversal, 
-  uploadSalesUniversal, getAttendance, getSales, getAttendanceAggregate, 
-  getAllSales, getAllAttendance, getActiveStorePerformance, getStorePerformanceByPeriod
+module.exports = {
+  createPeriod,
+  getAllPeriods,
+  generateMonthlySnapshot,
+  uploadAttendance,
+  uploadActualLabourCost,
+  uploadSales,
+  getSummary,
+  uploadAttendanceUniversal,
+  uploadSalesUniversal,
+  getAttendance,
+  getSales,
+  getAttendanceAggregate,
+  getAllSales,
+  getAllAttendance,
+  getActiveStorePerformance,
+  getStorePerformanceByPeriod
 };

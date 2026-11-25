@@ -1,37 +1,47 @@
+const fs = require('fs');
 const service = require('./service');
 const importService = require('./import');
 const { runDryRunOrGuard } = require('../../utils/importValidator');
-const fs = require('fs');
 
 const getEmployees = async (req, res) => {
-  try { 
-    res.status(200).json({ 
-      success: true, 
-      data: await service.getAllEmployees(req.query.search, req.query.status) 
-    }); 
-  } 
-  catch (error) { res.status(400).json({ success: false, message: error.message }); }
+  try {
+    res.status(200).json({
+      success: true,
+      data: await service.getAllEmployees(req.query.search, req.query.status)
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
 };
 
 const getEmployeeById = async (req, res) => {
-  try { res.status(200).json({ success: true, data: await service.getEmployeeById(req.params.id) }); } 
-  catch (error) { res.status(404).json({ success: false, message: error.message }); }
+  try {
+    res.status(200).json({ success: true, data: await service.getEmployeeById(req.params.id) });
+  } catch (error) {
+    res.status(404).json({ success: false, message: error.message });
+  }
 };
 
 const createEmployee = async (req, res) => {
-  try { res.status(201).json({ success: true, message: "Karyawan ditambahkan", data: await service.createEmployee(req.body) }); } 
-  catch (error) { res.status(400).json({ success: false, message: error.message }); }
+  try {
+    res.status(201).json({ success: true, message: 'Karyawan ditambahkan', data: await service.createEmployee(req.body) });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
 };
 
 const updateEmployee = async (req, res) => {
-  try { res.status(200).json({ success: true, message: "Data karyawan diupdate", data: await service.updateEmployee(req.params.id, req.body) }); } 
-  catch (error) { res.status(400).json({ success: false, message: error.message }); }
+  try {
+    res.status(200).json({ success: true, message: 'Data karyawan diupdate', data: await service.updateEmployee(req.params.id, req.body) });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
 };
 
 const deleteEmployee = async (req, res) => {
-  try { 
+  try {
     await service.deleteEmployee(req.params.id);
-    res.status(200).json({ success: true, message: "Data karyawan dinonaktifkan (Soft Delete)" });
+    res.status(200).json({ success: true, message: 'Data karyawan dinonaktifkan (Soft Delete)' });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
@@ -40,7 +50,7 @@ const deleteEmployee = async (req, res) => {
 const importEmployees = async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ success: false, message: "File Excel tidak ditemukan" });
+      return res.status(400).json({ success: false, message: 'File Excel tidak ditemukan' });
     }
 
     const guard = await runDryRunOrGuard(req, res, 'employees');
@@ -51,13 +61,23 @@ const importEmployees = async (req, res) => {
     res.status(200).json({
       success: true,
       message: `Import selesai. Sukses: ${result.sukses}, Gagal: ${result.gagal}`,
+      data: {
+        fileName: result.fileName || req.file.originalname,
+        period: result.period || guard.periodPolicy?.primaryPeriod || null,
+        modules: result.loggedModules || [],
+        sukses: result.sukses,
+        gagal: result.gagal
+      },
       errors: result.errorList
     });
-
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(error.statusCode || 500).json({
+      success: false,
+      code: error.code || 'IMPORT_ERROR',
+      message: error.message,
+      details: error.details || null
+    });
   } finally {
-    // Hapus file sementara setelah selesai diproses agar disk tidak penuh
     if (req.file && fs.existsSync(req.file.path)) {
       try { fs.unlinkSync(req.file.path); } catch (e) {}
     }

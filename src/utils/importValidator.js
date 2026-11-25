@@ -1,5 +1,6 @@
 const xlsx = require('xlsx');
 const prisma = require('../config/database');
+const { enforcePeriodPolicy } = require('./importBatchHelper');
 
 const MONTH_MAP = {
   jan: 1, januari: 1, january: 1,
@@ -620,6 +621,31 @@ const validateEmployees = async (workbook, fileName) => {
     }
   }
 
+  const activeSheets = Array.from(new Set(parsedRows.map(r => r.sheetName).filter(Boolean)));
+    const periodPolicy = enforcePeriodPolicy({
+      mode: 'STRICT_SINGLE',
+      sheets: activeSheets.length > 0 ? activeSheets : targetSheets,
+      detectedPeriods,
+      parsedRows
+    });
+
+    if (!periodPolicy.allowed) {
+      headerErrors.push(periodPolicy.message);
+    }
+
+    const report = buildReport({
+      moduleKey: 'employees',
+      fileName,
+      sheets: targetSheets,
+      detectedPeriods,
+      totalRows: totalDataRows,
+      invalidRowsCount: invalidRowLabels.size,
+      headerErrors,
+      rowErrors,
+      fileDuplicates,
+      dbDuplicates
+    });
+
   return buildReport({
     moduleKey: 'employees',
     fileName,
@@ -630,7 +656,9 @@ const validateEmployees = async (workbook, fileName) => {
     headerErrors,
     rowErrors,
     fileDuplicates,
-    dbDuplicates
+    dbDuplicates,
+    report,
+    periodPolicy
   });
 };
 
@@ -1931,25 +1959,58 @@ const validateImportFile = async (moduleKey, filePath, originalFilename = '') =>
   return await fn(workbook, originalFilename);
 };
 
-// Helper controller seragam untuk ?dryRun=true dan pre-commit guard (all-or-nothing)
+// Helper controller seragam untuk ?dryRun=true, pre-commit guard, dan kebijakan multi-bulan
 const runDryRunOrGuard = async (req, res, moduleKey) => {
   const isDryRun = String(req.query.dryRun || '').toLowerCase() === 'true';
+  const confirmStep = Number(req.body?.confirmStep ?? req.query?.confirmStep ?? 0);
   const validation = await validateImportFile(moduleKey, req.file.path, req.file.originalname);
 
+  // Modul selain employees (Demografi) memakai mode MULTI_CONFIRM (verifikasi 2 tahap jika beda bulan)
+  let periodPolicy = validation.periodPolicy || null;
+  if (moduleKey !== 'employees') {
+    periodPolicy = enforcePeriodPolicy({
+      mode: 'MULTI_CONFIRM',
+      sheets: validation.summary?.sheets || [],
+      detectedPeriods: validation.summary?.detectedPeriods || [],
+      confirmStep
+    });
+  }
+
   if (isDryRun) {
-    res.status(200).json(validation);
-    return { handled: true, validation };
+    res.status(200).json({
+      ...validation,
+      periodPolicy
+    });
+    return { handled: true, validation, periodPolicy };
   }
 
   if (!validation.canProceed) {
     res.status(400).json({
       ...validation,
+      periodPolicy,
       success: false
     });
-    return { handled: true, validation };
+    return { handled: true, validation, periodPolicy };
   }
 
-  return { handled: false, validation };
+  // Tahan proses simpan jika modul umum terdeteksi multi-bulan dan belum lolos konfirmasi tahap 2/2
+  if (periodPolicy && !periodPolicy.allowed && periodPolicy.requiresConfirmation) {
+    res.status(200).json({
+      success: false,
+      dryRun: false,
+      canProceed: false,
+      requiresConfirmation: true,
+      confirmStep: periodPolicy.confirmStep,
+      totalConfirmSteps: periodPolicy.totalConfirmSteps,
+      code: periodPolicy.code,
+      message: periodPolicy.message,
+      periods: periodPolicy.periods,
+      summary: validation.summary
+    });
+    return { handled: true, validation, periodPolicy };
+  }
+
+  return { handled: false, validation, periodPolicy };
 };
 
 module.exports = {

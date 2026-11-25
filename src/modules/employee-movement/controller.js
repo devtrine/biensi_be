@@ -1,6 +1,7 @@
+const fs = require('fs');
 const service = require('./service');
 const { runDryRunOrGuard } = require('../../utils/importValidator');
-const fs = require('fs');
+const { IMPORT_MODULES, logImportBatch } = require('../../utils/importBatchHelper');
 
 const getAllMovements = async (req, res) => {
   try {
@@ -8,7 +9,7 @@ const getAllMovements = async (req, res) => {
       page: req.query.page,
       limit: req.query.limit,
       search: req.query.search,
-      movementType: req.query.movementType 
+      movementType: req.query.movementType
     };
     const result = await service.getAllMovements(filters);
     res.status(200).json({ success: true, ...result });
@@ -45,25 +46,40 @@ const deleteMovement = async (req, res) => {
 };
 
 const uploadBulkMovement = async (req, res) => {
+  const startedAt = new Date();
   try {
-    if (!req.file) throw new Error("File Excel turnover wajib diunggah!");
+    if (!req.file) throw new Error('File Excel turnover wajib diunggah!');
 
     const guard = await runDryRunOrGuard(req, res, 'movement');
     if (guard.handled) return;
-    
-    // Panggil service dan tangkap return-nya
-    const result = await service.importBulkMovement(req.file.path);
-    
-    // Pastikan result tidak undefined (Solusi Error 2)
-    if (!result) throw new Error("Gagal memproses data, respons kosong dari server.");
 
-    res.status(201).json({ 
-      success: true, 
+    const result = await service.importBulkMovement(req.file.path);
+    if (!result) throw new Error('Gagal memproses data, respons kosong dari server.');
+
+    const totalRows = guard.validation?.summary?.totalRows || (result.sukses + result.gagal);
+    await logImportBatch({
+      module: IMPORT_MODULES.MOVEMENT,
+      periods: guard.periodPolicy?.periods || [],
+      fileName: req.file.originalname,
+      totalRows,
+      successRows: result.sukses || 0,
+      failedRows: result.gagal || 0,
+      startedAt
+    });
+
+    res.status(201).json({
+      success: true,
       message: `Import Selesai! Sukses: ${result.sukses}, Gagal: ${result.gagal}`,
-      errors: result.errorList 
+      data: {
+        fileName: req.file.originalname,
+        periods: guard.periodPolicy?.periods || [],
+        sukses: result.sukses,
+        gagal: result.gagal
+      },
+      errors: result.errorList
     });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    res.status(error.statusCode || 400).json({ success: false, message: error.message });
   } finally {
     if (req.file && fs.existsSync(req.file.path)) {
       try { fs.unlinkSync(req.file.path); } catch (e) {}
@@ -73,35 +89,30 @@ const uploadBulkMovement = async (req, res) => {
 
 const getTurnoverDashboard = async (req, res) => {
   try {
-    // 1. Ambil waktu saat ini sebagai default (Fallback)
     const currentDate = new Date();
     const defaultYear = currentDate.getFullYear();
     const defaultMonth = currentDate.getMonth() + 1;
-    
-    // 2. Tangkap parameter dari URL query (?year=2026&month=12)
+
     const year = parseInt(req.query.year) || defaultYear;
     const month = parseInt(req.query.month) || defaultMonth;
 
-    // 3. Panggil Service
     const result = await service.getTurnoverDashboard(year, month);
-
-    // 4. Kirim Response ke Frontend
     res.status(200).json(result);
   } catch (error) {
-    console.error("Error getTurnoverDashboard:", error.message);
-    res.status(500).json({ 
-      success: false, 
-      message: "Gagal mengambil data dashboard turnover",
-      error: error.message 
+    console.error('Error getTurnoverDashboard:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mengambil data dashboard turnover',
+      error: error.message
     });
   }
 };
 
-module.exports = { 
-  getAllMovements, 
-  getMovementById, 
-  createMovement, 
-  deleteMovement, 
+module.exports = {
+  getAllMovements,
+  getMovementById,
+  createMovement,
+  deleteMovement,
   uploadBulkMovement,
-  getTurnoverDashboard 
+  getTurnoverDashboard
 };

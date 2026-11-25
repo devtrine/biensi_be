@@ -17,7 +17,8 @@ const monthlyReportingRoutes = require('./monthly-reporting/routes');
 const movemntRoutes = require('./employee-movement/routes');
 const disciplinaryRoutes = require ('./disciplinary/routes');
 const compilanceRoutes = require ('./compilance/routes');
-const dashboardRoutes = require ('./dashboard/routes')
+const dashboardRoutes = require ('./dashboard/routes');
+const importRoutes = require ('./import_batches/routes');
 
 router.use('/auth', authRoutes);
 router.use('/administration', administrationRoutes);
@@ -32,6 +33,7 @@ router.use('/movement', movemntRoutes);
 router.use('/disciplinary', disciplinaryRoutes);
 router.use('/compilance', compilanceRoutes);
 router.use('/dashboard', dashboardRoutes);
+router.use('/import', importRoutes);
 
 // Endpoint khusus dry-run validasi (read-only, tidak pernah menulis ke DB)
 router.post(

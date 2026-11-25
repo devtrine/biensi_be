@@ -23,14 +23,14 @@ model User {
   email       String    @unique @db.VarChar(100)
   name        String    @db.VarChar(100)
   password    String
-  roleId      Int?       @map("role_id")
+  roleId      Int?      @map("role_id")
   phoneNumber String?   @map("phone_number") @db.VarChar(50)
   photoUrl    String?   @map("photo_url")
   lastLogin   DateTime? @map("last_login") @db.Timestamp(6)
-  
-  isActive    Boolean   @default(true) @map("is_active")
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
   role Role? @relation(fields: [roleId], references: [id])
 
@@ -98,8 +98,8 @@ model Unit {
   createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt    DateTime? @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  department   Department @relation(fields: [departmentId], references: [id])
-  employees    Employee[]
+  department Department @relation(fields: [departmentId], references: [id])
+  employees  Employee[]
 
   @@map("units")
 }
@@ -147,8 +147,8 @@ model StoreCompliance {
   remainingDays Int?      @default(0) @map("remaining_days")
   notes         String?   @map("notes") @db.Text
 
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  store         Store?    @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  store     Store?   @relation(fields: [storeId], references: [id], onDelete: SetNull)
 
   @@map("store_compliances")
 }
@@ -182,8 +182,8 @@ model Employee {
   position   Position?   @relation(fields: [positionId], references: [id])
   store      Store?      @relation(fields: [storeId], references: [id])
 
-  monthlySnapshots  EmployeeMonthlySnapshot[]
-  movements         EmployeeMovement[]
+  monthlySnapshots EmployeeMonthlySnapshot[]
+  movements        EmployeeMovement[]
 
   recruitmentHires  RecruitmentHire[]
   disciplinaryCases DisciplinaryCase[]
@@ -198,21 +198,21 @@ model Employee {
 }
 
 model EmployeeMovement {
-  id                  String    @id @default(uuid()) @db.Uuid
-  employeeId          String    @map("employee_id") @db.Uuid
-  movementType        String    @map("movement_type") @db.VarChar(50) 
-  movementDate        DateTime  @map("movement_date") @db.Date
+  id              String   @id @default(uuid()) @db.Uuid
+  employeeId      String   @map("employee_id") @db.Uuid
+  movementType    String   @map("movement_type") @db.VarChar(50)
+  movementDate    DateTime @map("movement_date") @db.Date
   // Kategori alasan: 'RESIGN SOP', 'PHK', dll
-  reasonCategory      String?   @map("reason_category") @db.VarChar(100) 
-  reasonDetail        String?   @map("reason_detail") @db.Text 
-  clearanceStatus     String?   @map("clearance_status") @db.VarChar(50)
-  backfillStatus      String?   @map("backfill_status") @db.VarChar(100)
-  retentionAction     String?   @map("retention_action") @db.VarChar(255)
+  reasonCategory  String?  @map("reason_category") @db.VarChar(100)
+  reasonDetail    String?  @map("reason_detail") @db.Text
+  clearanceStatus String?  @map("clearance_status") @db.VarChar(50)
+  backfillStatus  String?  @map("backfill_status") @db.VarChar(100)
+  retentionAction String?  @map("retention_action") @db.VarChar(255)
 
-  divisionId          Int?      @map("division_id")
-  departmentId        Int?      @map("department_id")
-  storeId             Int?      @map("store_id")
-  createdAt           DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  divisionId   Int?      @map("division_id")
+  departmentId Int?      @map("department_id")
+  storeId      Int?      @map("store_id")
+  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
 
   employee   Employee    @relation(fields: [employeeId], references: [id])
   division   Division?   @relation(fields: [divisionId], references: [id])
@@ -230,35 +230,36 @@ model ReportingPeriod {
   periodStart DateTime @map("period_start") @db.Date
   periodEnd   DateTime @map("period_end") @db.Date
 
-  employeeSnaps   EmployeeMonthlySnapshot[]
-  salesMonthly    SalesMonthly[]
-  kpiPositions    KpiPosition[]
+  employeeSnaps       EmployeeMonthlySnapshot[]
+  salesMonthly        SalesMonthly[]
+  kpiPositions        KpiPosition[]
   attendanceAggregate AttendanceAggregateMonthly[]
   spAggregateMonthly  SpAggregateMonthly[]
+  importBatches       ImportBatch[]
 
   @@unique([year, month])
   @@map("reporting_periods")
 }
 
 model EmployeeMonthlySnapshot {
-  id                  String    @id @default(uuid()) @db.Uuid
-  periodId            String    @map("period_id") @db.Uuid
-  employeeId          String    @map("employee_id") @db.Uuid
-  divisionId          Int?      @map("division_id")
-  departmentId        Int?      @map("department_id")
-  positionId          Int?      @map("position_id")
-  storeId             Int?      @map("store_id")
-  employeeLevel       String?   @map("employee_level") @db.VarChar(50)
-  employmentType      String?   @map("employment_type") @db.VarChar(30)
-  ageYears            Decimal?  @map("age_years") @db.Decimal(5, 2)
-  tenureYears         Decimal?  @map("tenure_years") @db.Decimal(5, 2)
-  employmentStatus    String?   @map("employment_status") @db.VarChar(30)
-  bpjsKetenagakerjaan Boolean?  @map("bpjs_ketenagakerjaan")
-  bpjsKesehatan       Boolean?  @map("bpjs_kesehatan")
-  budgetLabourCost    Decimal?  @map("budget_labour_cost") @db.Decimal(18, 2)
-  actualLabourCost    Decimal?  @map("actual_labour_cost") @db.Decimal(18, 2)
-  
-  createdAt           DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  id                  String   @id @default(uuid()) @db.Uuid
+  periodId            String   @map("period_id") @db.Uuid
+  employeeId          String   @map("employee_id") @db.Uuid
+  divisionId          Int?     @map("division_id")
+  departmentId        Int?     @map("department_id")
+  positionId          Int?     @map("position_id")
+  storeId             Int?     @map("store_id")
+  employeeLevel       String?  @map("employee_level") @db.VarChar(50)
+  employmentType      String?  @map("employment_type") @db.VarChar(30)
+  ageYears            Decimal? @map("age_years") @db.Decimal(5, 2)
+  tenureYears         Decimal? @map("tenure_years") @db.Decimal(5, 2)
+  employmentStatus    String?  @map("employment_status") @db.VarChar(30)
+  bpjsKetenagakerjaan Boolean? @map("bpjs_ketenagakerjaan")
+  bpjsKesehatan       Boolean? @map("bpjs_kesehatan")
+  budgetLabourCost    Decimal? @map("budget_labour_cost") @db.Decimal(18, 2)
+  actualLabourCost    Decimal? @map("actual_labour_cost") @db.Decimal(18, 2)
+
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
 
   period     ReportingPeriod @relation(fields: [periodId], references: [id])
   employee   Employee        @relation(fields: [employeeId], references: [id])
@@ -273,31 +274,32 @@ model EmployeeMonthlySnapshot {
 }
 
 model AttendanceAggregateMonthly {
-  id               String   @id @default(uuid()) @db.Uuid
-  periodId         String   @map("period_id") @db.Uuid
-  totalEmployees   Int      @map("total_employees")
-  scope            String?  @map("scope") @db.VarChar(50)
-  sickCount        Int      @default(0) @map("sick_count")
-  permissionCount  Int      @default(0) @map("permission_count")
-  annualLeaveCount Int      @default(0) @map("annual_leave_count")
-  absentCount      Int      @default(0) @map("absent_count")
-  workingDays      Int?     @map("working_days")
-  attendanceRate   Decimal? @map("attendance_rate") @db.Decimal(5, 2)
+  id               String    @id @default(uuid()) @db.Uuid
+  periodId         String    @map("period_id") @db.Uuid
+  totalEmployees   Int       @map("total_employees")
+  scope            String?   @map("scope") @db.VarChar(50)
+  sickCount        Int       @default(0) @map("sick_count")
+  permissionCount  Int       @default(0) @map("permission_count")
+  annualLeaveCount Int       @default(0) @map("annual_leave_count")
+  absentCount      Int       @default(0) @map("absent_count")
+  workingDays      Int?      @map("working_days")
+  attendanceRate   Decimal?  @map("attendance_rate") @db.Decimal(5, 2)
   createdAt        DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
 
   period ReportingPeriod @relation(fields: [periodId], references: [id])
+
   @@unique([periodId, scope])
   @@map("attendance_aggregate_monthly")
 }
 
 model SalesMonthly {
-  id           String    @id @default(uuid()) @db.Uuid
-  periodId     String    @map("period_id") @db.Uuid
-  storeId      Int       @map("store_id")
-  salesQty     Decimal?  @default(0) @map("sales_qty") @db.Decimal(18, 2)
-  netSales     Decimal?  @default(0) @map("net_sales") @db.Decimal(18, 2)
-  targetSales  Decimal?  @map("target_sales") @db.Decimal(18, 2)
-  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  id          String    @id @default(uuid()) @db.Uuid
+  periodId    String    @map("period_id") @db.Uuid
+  storeId     Int       @map("store_id")
+  salesQty    Decimal?  @default(0) @map("sales_qty") @db.Decimal(18, 2)
+  netSales    Decimal?  @default(0) @map("net_sales") @db.Decimal(18, 2)
+  targetSales Decimal?  @map("target_sales") @db.Decimal(18, 2)
+  createdAt   DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
 
   period ReportingPeriod @relation(fields: [periodId], references: [id])
   store  Store           @relation(fields: [storeId], references: [id])
@@ -428,20 +430,20 @@ model IndustrialRelationCase {
 }
 
 model SpAggregateMonthly {
-  id                 String          @id @default(uuid()) @db.Uuid
-  periodId           String          @map("period_id") @db.Uuid
-  scope              String          @default("STORE") @db.VarChar(20)
+  id       String @id @default(uuid()) @db.Uuid
+  periodId String @map("period_id") @db.Uuid
+  scope    String @default("STORE") @db.VarChar(20)
 
-  totalEmployees     Int             @default(0) @map("total_employees")
-  tataTertibCount    Int             @default(0) @map("tata_tertib_count")     // Kategori SP: Tata Tertib
-  nonTataTertibCount Int             @default(0) @map("non_tata_tertib_count") // Kategori SP: Non Tata Tertib
-  totalSpIssued      Int             @default(0) @map("total_sp_issued")       // Metrik #27: Jumlah total SP yg diterbitkan
-  breakdown          Json?           @map("breakdown")                         // Rincian SP1-3, Regional, Toko, Jabatan
+  totalEmployees     Int   @default(0) @map("total_employees")
+  tataTertibCount    Int   @default(0) @map("tata_tertib_count") // Kategori SP: Tata Tertib
+  nonTataTertibCount Int   @default(0) @map("non_tata_tertib_count") // Kategori SP: Non Tata Tertib
+  totalSpIssued      Int   @default(0) @map("total_sp_issued") // Metrik #27: Jumlah total SP yg diterbitkan
+  breakdown          Json? @map("breakdown") // Rincian SP1-3, Regional, Toko, Jabatan
 
-  createdAt          DateTime        @default(now()) @map("created_at")
-  updatedAt          DateTime        @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  period             ReportingPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  period ReportingPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
 
   @@unique([periodId, scope])
   @@map("sp_aggregate_monthly")
@@ -450,6 +452,10 @@ model SpAggregateMonthly {
 // IMPORT PIPELINE (Staging - Tetap Pakai UUID/BigInt)
 model ImportBatch {
   id          String    @id @default(uuid()) @db.Uuid
+  module      String?   @db.VarChar(50)
+  periodId    String?   @map("period_id") @db.Uuid // [NEW] Relasi langsung ke ReportingPeriod untuk audit
+  periodYear  Int?      @map("period_year")
+  periodMonth Int?      @map("period_month")
   fileName    String    @map("file_name") @db.VarChar(255)
   sourceType  String?   @map("source_type") @db.VarChar(50)
   status      String?   @db.VarChar(30)
@@ -460,8 +466,11 @@ model ImportBatch {
   completedAt DateTime? @map("completed_at") @db.Timestamp(6)
   createdAt   DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
 
+  period      ReportingPeriod?        @relation(fields: [periodId], references: [id])
   stagingData StagingEmployeeImport[]
 
+  @@index([module, periodYear, periodMonth])
+  @@index([periodId])
   @@map("import_batches")
 }
 
