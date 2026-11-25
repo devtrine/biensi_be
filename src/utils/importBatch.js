@@ -35,8 +35,10 @@ const resolvePeriodId = async (year, month) => {
   if (existing) return existing.id;
 
   try {
+    const periodStart = new Date(Date.UTC(numYear, numMonth - 1, 1));
+    const periodEnd = new Date(Date.UTC(numYear, numMonth, 0));
     const created = await prisma.reportingPeriod.create({
-      data: { year: numYear, month: numMonth },
+      data: { year: numYear, month: numMonth, periodStart, periodEnd },
       select: { id: true }
     });
     return created.id;
@@ -283,15 +285,31 @@ const getImportStatusByYear = async ({ module, year }) => {
   });
 
   const latestByMonth = {};
+  const filesByMonth = {};
   batches.forEach(b => {
     const m = b.periodMonth || b.period?.month;
-    if (m >= 1 && m <= 12 && !latestByMonth[m]) {
-      latestByMonth[m] = b;
+    if (m >= 1 && m <= 12) {
+      if (!latestByMonth[m]) latestByMonth[m] = b;
+      if (b.fileName) {
+        if (!filesByMonth[m]) filesByMonth[m] = [];
+        if (!filesByMonth[m].includes(b.fileName)) {
+          filesByMonth[m].push(b.fileName);
+        }
+      }
     }
   });
 
-  // Fallback data lama di DB khusus Demografi (sebelum ImportBatch aktif)
+  // Fallback data lama di DB (sebelum ImportBatch aktif) agar status tetap akurat
   const legacyByMonth = {};
+  const yearStart = new Date(Date.UTC(numYear, 0, 1));
+  const yearEnd = new Date(Date.UTC(numYear, 11, 31, 23, 59, 59, 999));
+  const addLegacyCount = (m, count = 1, periodId = null) => {
+    if (m < 1 || m > 12) return;
+    if (!legacyByMonth[m]) legacyByMonth[m] = { periodId, count: 0 };
+    legacyByMonth[m].count += count;
+    if (!legacyByMonth[m].periodId && periodId) legacyByMonth[m].periodId = periodId;
+  };
+
   if (module === IMPORT_MODULES.DEMOGRAFI_HO || module === IMPORT_MODULES.DEMOGRAFI_STORE) {
     const periodsInYear = await prisma.reportingPeriod.findMany({
       where: { year: numYear },
@@ -314,6 +332,68 @@ const getImportStatusByYear = async ({ module, year }) => {
         if (p) legacyByMonth[p.month] = { periodId: p.id, count: g._count.id };
       });
     }
+  } else if (module === IMPORT_MODULES.ATTENDANCE || module === IMPORT_MODULES.SALES || module === IMPORT_MODULES.SP_REKAP) {
+    const periodsInYear = await prisma.reportingPeriod.findMany({
+      where: { year: numYear },
+      select: { id: true, month: true }
+    });
+    if (periodsInYear.length > 0) {
+      const model = module === IMPORT_MODULES.ATTENDANCE
+        ? prisma.attendanceAggregateMonthly
+        : module === IMPORT_MODULES.SALES
+          ? prisma.salesMonthly
+          : prisma.spAggregateMonthly;
+      const grouped = await model.groupBy({
+        by: ['periodId'],
+        where: { periodId: { in: periodsInYear.map(p => p.id) } },
+        _count: { id: true }
+      });
+      const periodMap = new Map(periodsInYear.map(p => [p.id, p]));
+      grouped.forEach(g => {
+        const p = periodMap.get(g.periodId);
+        if (p) addLegacyCount(p.month, g._count.id, p.id);
+      });
+    }
+  } else if (module === IMPORT_MODULES.MOVEMENT) {
+    const rows = await prisma.employeeMovement.findMany({
+      where: { movementDate: { gte: yearStart, lte: yearEnd } },
+      select: { movementDate: true }
+    });
+    rows.forEach(r => addLegacyCount(new Date(r.movementDate).getUTCMonth() + 1));
+  } else if (module === IMPORT_MODULES.SP) {
+    const rows = await prisma.disciplinaryCase.findMany({
+      where: { category: { not: 'Fraud & Audit' }, startDate: { gte: yearStart, lte: yearEnd } },
+      select: { startDate: true }
+    });
+    rows.forEach(r => { if (r.startDate) addLegacyCount(new Date(r.startDate).getUTCMonth() + 1); });
+  } else if (module === IMPORT_MODULES.FRAUD) {
+    const rows = await prisma.fraudCase.findMany({
+      where: {
+        OR: [
+          { caseDate: { gte: yearStart, lte: yearEnd } },
+          { auditDate: { gte: yearStart, lte: yearEnd } }
+        ]
+      },
+      select: { caseDate: true, auditDate: true }
+    });
+    rows.forEach(r => {
+      const d = r.caseDate || r.auditDate;
+      if (d) addLegacyCount(new Date(d).getUTCMonth() + 1);
+    });
+  } else if (module === IMPORT_MODULES.BIPARTIT) {
+    const rows = await prisma.industrialRelationCase.findMany({
+      where: {
+        OR: [
+          { startDate: { gte: yearStart, lte: yearEnd } },
+          { endDate: { gte: yearStart, lte: yearEnd } }
+        ]
+      },
+      select: { startDate: true, endDate: true }
+    });
+    rows.forEach(r => {
+      const d = r.startDate || r.endDate;
+      if (d) addLegacyCount(new Date(d).getUTCMonth() + 1);
+    });
   }
 
   return MONTH_NAMES.map((monthName, idx) => {
@@ -330,11 +410,66 @@ const getImportStatusByYear = async ({ module, year }) => {
       status: isInputted ? 'SUDAH_DIINPUT' : 'BELUM_DIINPUT',
       isInputted,
       fileName: batch?.fileName || (legacy ? 'Data tersimpan (nama file belum tercatat)' : null),
+      files: filesByMonth[month] || (batch?.fileName ? [batch.fileName] : []),
       totalRecords: batch?.successRows ?? legacy?.count ?? 0,
       lastBatchId: batch?.id || null,
       uploadedAt: batch?.completedAt || null
     };
   });
+};
+
+/**
+ * Cek apakah file dengan nama yang sama sudah pernah diimport pada bulan yang sama
+ */
+const findDuplicateFileImports = async ({ moduleKeys = [], fileName = '', periods = [] }) => {
+  const safeFileName = String(fileName || '').trim();
+  if (!safeFileName || !Array.isArray(moduleKeys) || moduleKeys.length === 0) {
+    return { isDuplicateFile: false, fileName: safeFileName, matchedPeriods: [], message: null };
+  }
+
+  const periodFilters = (Array.isArray(periods) ? periods : [])
+    .filter(p => p && p.year && p.month)
+    .map(p => ({ periodYear: Number(p.year), periodMonth: Number(p.month) }));
+
+  const existingBatches = await prisma.importBatch.findMany({
+    where: {
+      module: { in: moduleKeys },
+      status: { in: ['SUCCESS', 'PARTIAL'] },
+      fileName: { equals: safeFileName, mode: 'insensitive' },
+      ...(periodFilters.length > 0 ? { OR: periodFilters } : {})
+    },
+    orderBy: { completedAt: 'desc' }
+  });
+
+  const matchedMap = new Map();
+  for (const b of existingBatches) {
+    if (!b.periodYear || !b.periodMonth) continue;
+    const key = `${b.periodYear}-${String(b.periodMonth).padStart(2, '0')}`;
+    if (!matchedMap.has(key)) {
+      matchedMap.set(key, {
+        key,
+        year: b.periodYear,
+        month: b.periodMonth,
+        label: `${MONTH_NAMES[b.periodMonth - 1]} ${b.periodYear}`,
+        fileName: b.fileName,
+        uploadedAt: b.completedAt || b.createdAt || null,
+        totalRecords: b.successRows ?? b.totalRows ?? 0
+      });
+    }
+  }
+
+  const matchedPeriods = Array.from(matchedMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+  const isDuplicateFile = matchedPeriods.length > 0;
+  const labels = matchedPeriods.map(p => p.label).join(', ');
+
+  return {
+    isDuplicateFile,
+    fileName: safeFileName,
+    matchedPeriods,
+    message: isDuplicateFile
+      ? `File "${safeFileName}" sudah pernah dimasukkan pada bulan ${labels}. Apakah Anda yakin ingin memasukkan lagi file yang sama?`
+      : null
+  };
 };
 
 module.exports = {
@@ -344,5 +479,6 @@ module.exports = {
   summarizeDetectedPeriods,
   enforcePeriodPolicy,
   logImportBatch,
-  getImportStatusByYear
+  getImportStatusByYear,
+  findDuplicateFileImports
 };

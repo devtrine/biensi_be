@@ -36,14 +36,16 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // Maksimal 50MB (sinkron dengan batasan UI)
   fileFilter: (req, file, cb) => {
     const allowedMimeTypes = [
-      'application/vnd.ms-excel', 
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/csv',
+      'application/csv'
     ];
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowedMimeTypes.includes(file.mimetype) || ext === '.xlsx' || ext === '.xls') {
+    if (allowedMimeTypes.includes(file.mimetype) || ext === '.xlsx' || ext === '.xls' || ext === '.csv') {
       cb(null, true);
     } else {
-      cb(new Error('Format file ditolak! Hanya file Excel (.xlsx / .xls) yang diperbolehkan.'));
+      cb(new Error('Format file ditolak! Hanya file Excel (.xlsx / .xls / .csv) yang diperbolehkan.'));
     }
   }
 });

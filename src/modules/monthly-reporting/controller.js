@@ -5,7 +5,7 @@ const service = require('./service');
 const repository = require('./repository');
 const { getAttendanceAggregate } = require('./repository');
 const { runDryRunOrGuard } = require('../../utils/importValidator');
-const { IMPORT_MODULES, logImportBatch } = require('../../utils/importBatchHelper');
+const { IMPORT_MODULES, logImportBatch } = require('../../utils/importBatch');
 
 const parseExcel = (filePath) => {
   const workbook = xlsx.readFile(filePath);

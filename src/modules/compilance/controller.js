@@ -1,7 +1,7 @@
 const fs = require('fs');
 const service = require('./service');
 const { runDryRunOrGuard } = require('../../utils/importValidator');
-const { IMPORT_MODULES, logImportBatch } = require('../../utils/importBatchHelper');
+const { IMPORT_MODULES, logImportBatch } = require('../../utils/importBatch');
 
 const importCompliance = async (req, res) => {
   const startedAt = new Date();

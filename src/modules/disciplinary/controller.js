@@ -2,7 +2,7 @@ const fs = require('fs');
 const { getDashboardData } = require('./repository');
 const service = require('./service');
 const { runDryRunOrGuard } = require('../../utils/importValidator');
-const { IMPORT_MODULES, logImportBatch } = require('../../utils/importBatchHelper');
+const { IMPORT_MODULES, logImportBatch } = require('../../utils/importBatch');
 
 const cleanupTempFile = (req) => {
   if (req.file && fs.existsSync(req.file.path)) {

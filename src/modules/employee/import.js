@@ -1,6 +1,7 @@
 const xlsx = require('xlsx');
 const repository = require('./repository');
 const prisma = require('../../config/database');
+const { IMPORT_MODULES, logImportBatch, MONTH_NAMES } = require('../../utils/importBatch');
 
 // Ubah serial Excel ke Tanggal
 const excelDateToJSDate = (serial) => {
@@ -192,6 +193,7 @@ const parseMonthYearValue = (rawMonth, rawYear, fallback) => {
 };
 
 const processExcelImport = async (filePath, originalFilename = '') => {
+  const startedAt = new Date();
   const workbook = xlsx.readFile(filePath);
 
   // 1. Identifikasi sheet yang berisi data karyawan (HO & Toko)
@@ -350,6 +352,56 @@ const processExcelImport = async (filePath, originalFilename = '') => {
   if (syncWarnings.length > 0) {
     importResult.errorList.push(...syncWarnings);
   }
+
+  const firstPeriodRow = formattedData.find(r => r.periodYear && r.periodMonth);
+  const targetYear = firstPeriodRow?.periodYear || new Date().getFullYear();
+  const targetMonth = firstPeriodRow?.periodMonth || (new Date().getMonth() + 1);
+  const safeFileName = originalFilename || 'demografi.xlsx';
+  const loggedModules = [];
+
+  if (importResult.sukses > 0) {
+    const hoRows = formattedData.filter(r => !r.storeName);
+    const storeRows = formattedData.filter(r => Boolean(r.storeName));
+
+    if (hoRows.length > 0) {
+      const hoSuccess = hoRows.filter(r => r._resolved).length;
+      await logImportBatch({
+        module: IMPORT_MODULES.DEMOGRAFI_HO,
+        periodYear: targetYear,
+        periodMonth: targetMonth,
+        fileName: safeFileName,
+        totalRows: hoRows.length,
+        successRows: hoSuccess,
+        failedRows: Math.max(0, hoRows.length - hoSuccess),
+        startedAt
+      });
+      loggedModules.push(IMPORT_MODULES.DEMOGRAFI_HO);
+    }
+
+    if (storeRows.length > 0) {
+      const storeSuccess = storeRows.filter(r => r._resolved).length;
+      await logImportBatch({
+        module: IMPORT_MODULES.DEMOGRAFI_STORE,
+        periodYear: targetYear,
+        periodMonth: targetMonth,
+        fileName: safeFileName,
+        totalRows: storeRows.length,
+        successRows: storeSuccess,
+        failedRows: Math.max(0, storeRows.length - storeSuccess),
+        startedAt
+      });
+      loggedModules.push(IMPORT_MODULES.DEMOGRAFI_STORE);
+    }
+  }
+
+  importResult.fileName = safeFileName;
+  importResult.period = {
+    year: targetYear,
+    month: targetMonth,
+    key: `${targetYear}-${String(targetMonth).padStart(2, '0')}`,
+    label: `${MONTH_NAMES[targetMonth - 1]} ${targetYear}`
+  };
+  importResult.loggedModules = loggedModules;
 
   return importResult;
 };
