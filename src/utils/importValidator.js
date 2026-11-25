@@ -480,12 +480,12 @@ const validateEmployees = async (workbook, fileName) => {
         pushRowErr(`${label} (NIK: ${empNoClean}): Nama Karyawan kosong.`);
       }
 
-      const rawGender = getRowVal(row, 'jeniskelamin', 'gender', 'jk', 'kelamin', 'sex', 'lp');
+      const rawGender = getRowVal(row, 'jeniskelamin', 'jeniskelamin4', 'gender', 'jk', 'kelamin', 'sex', 'lp');
       if (!isValidGender(rawGender)) {
         pushRowErr(`${label} (NIK: ${empNoClean}): Nilai Jenis Kelamin "${rawGender}" tidak dikenali (kemungkinan typo; gunakan Laki-laki / Perempuan / L / P).`);
       }
 
-      const rawBirth = getRowVal(row, 'tanggallahir', 'tgllahir', 'birthdate');
+      const rawBirth = getRowVal(row, 'tanggallahir', 'tanggallahir5', 'tgllahir', 'birthdate');
       const birthRes = parseStrictDate(rawBirth);
       if (!birthRes.valid) {
         pushRowErr(`${label} (NIK: ${empNoClean}): Format Tanggal Lahir tidak valid ("${birthRes.raw}").`);
@@ -549,8 +549,9 @@ const validateEmployees = async (workbook, fileName) => {
     });
   }
 
-// Cek duplikat internal file (NIK + Scope + Toko + Periode sama; beda toko diizinkan untuk kasus mutasi)
+  // Cek duplikat internal file (NIK + Scope + Toko + Periode sama; beda toko diizinkan untuk kasus mutasi)
   const seenFile = new Map();
+  const nonDupFileRows = [];
   for (const r of parsedRows) {
     const key = `${r.empNo}|${r.scopeTag}|${r.store}|${r.periodKey}`;
     if (seenFile.has(key)) {
@@ -559,10 +560,56 @@ const validateEmployees = async (workbook, fileName) => {
       invalidRowLabels.add(r.label);
     } else {
       seenFile.set(key, r);
+      nonDupFileRows.push(r);
     }
   }
 
-  // Cek duplikat terhadap database (snapshot periode + employee identik sudah ada di DB)
+  // Bangun ringkasan mutasi lintas toko (1 NIK muncul di >1 toko dalam bulan yang sama)
+  const groupedByEmpPeriod = new Map();
+  for (const r of nonDupFileRows) {
+    const k = `${r.empNo}|${r.periodKey}`;
+    if (!groupedByEmpPeriod.has(k)) groupedByEmpPeriod.set(k, []);
+    groupedByEmpPeriod.get(k).push(r);
+  }
+  const mutationItems = [];
+  let extraRowCount = 0;
+  for (const group of groupedByEmpPeriod.values()) {
+    if (group.length < 2) continue;
+    const distinctStores = new Set(group.map(g => g.store || 'HO'));
+    if (distinctStores.size < 2) continue;
+    const finalRow = group[group.length - 1];
+    const occurrences = group.map(g => ({
+      rowNum: g.rowNum,
+      sheetName: g.sheetName,
+      storeLabel: g.store || 'HO (Kantor Pusat)'
+    }));
+    extraRowCount += group.length - 1;
+    mutationItems.push({
+      employeeNo: finalRow.empNo,
+      fullName: finalRow.fullName,
+      periodKey: finalRow.periodKey,
+      occurrences,
+      originStores: occurrences.slice(0, -1).map(o => o.storeLabel),
+      finalStore: finalRow.store || 'HO (Kantor Pusat)',
+      finalRowNum: finalRow.rowNum
+    });
+  }
+  const mutationSummary = mutationItems.length > 0
+    ? {
+        totalValidRows: nonDupFileRows.length,
+        uniqueHeadcount: groupedByEmpPeriod.size,
+        mutatedEmployeeCount: mutationItems.length,
+        extraRowCount,
+        items: mutationItems
+      }
+    : null;
+
+  const normOrgName = (v) => {
+    const c = (v || '').replace(/\s+/g, ' ').trim().toUpperCase();
+    return (c === 'COMERCIAL BUSSINESS' || c === 'COMERCIAL BUSINESS') ? 'COMMERCIAL BUSINESS' : c;
+  };
+
+  // Cek duplikat terhadap database (snapshot efektif periode + employee identik sudah ada di DB)
   if (parsedRows.length > 0) {
     const periodPairs = Array.from(new Set(parsedRows.map(r => `${r.year}-${r.month}`))).map(s => {
       const [y, m] = s.split('-').map(Number);
@@ -602,35 +649,48 @@ const validateEmployees = async (workbook, fileName) => {
         snapLookup.set(`${s.periodId}|${baseNo}|${sc}`, s);
       }
 
-      const matchedDbItems = [];
+      // Gunakan baris terakhir per NIK + Scope + Periode (mengikuti aturan snapshot mutasi)
+      const effectiveRowsMap = new Map();
       for (const r of parsedRows) {
+        effectiveRowsMap.set(`${r.empNo}|${r.scopeTag}|${r.periodKey}`, r);
+      }
+      const effectiveRows = Array.from(effectiveRowsMap.values());
+
+      const matchedDbItems = [];
+      for (const r of effectiveRows) {
         const pId = periodIdByKey.get(r.periodKey);
         if (!pId) continue;
         const existing = snapLookup.get(`${pId}|${r.empNo}|${r.scopeTag}`);
         if (!existing) continue;
 
         const dbName = (existing.employee?.fullName || '').replace(/\s+/g, ' ').trim().toUpperCase();
-        const dbPos = (existing.position?.name || '').replace(/\s+/g, ' ').trim().toUpperCase();
-        const dbLevel = (existing.employeeLevel || existing.position?.employeeLevel || 'STAFF').replace(/\s+/g, ' ').trim().toUpperCase();
+        const dbStore = (existing.store?.storeName || '').replace(/\s+/g, ' ').trim().toUpperCase();
+        const dbDiv = normOrgName(existing.division?.name);
+        const dbDept = normOrgName(existing.department?.name);
+        const dbPos = normOrgName(existing.position?.name);
+        const dbLevel = normOrgName(existing.employeeLevel || existing.position?.employeeLevel || 'STAFF');
         const dbSalary = existing.budgetLabourCost !== null && existing.budgetLabourCost !== undefined
           ? Math.round(Number(existing.budgetLabourCost))
           : null;
 
         const isSameName = dbName === r.fullName;
-        const isSamePos = !r.posName || dbPos === r.posName;
-        const isSameLevel = !r.levelName || dbLevel === r.levelName;
+        const isSameStore = dbStore === (r.store || '');
+        const isSameDiv = !r.divName || dbDiv === normOrgName(r.divName);
+        const isSameDept = !r.deptName || dbDept === normOrgName(r.deptName);
+        const isSamePos = !r.posName || dbPos === normOrgName(r.posName);
+        const isSameLevel = !r.levelName || dbLevel === normOrgName(r.levelName);
         const isSameSalary = r.salaryNum === null || dbSalary === r.salaryNum;
 
-        if (isSameName && isSamePos && isSameLevel && isSameSalary) {
+        if (isSameName && isSameStore && isSameDiv && isSameDept && isSamePos && isSameLevel && isSameSalary) {
           matchedDbItems.push({
             label: r.label,
-            msg: `${r.label} (NIK: ${r.empNo}, Nama: ${r.fullName}, Periode: ${r.periodKey}): Data karyawan periode ini sudah ada di database.`
+            msg: `${r.label} (NIK: ${r.empNo}, Nama: ${r.fullName}, Toko: ${r.store || 'HO'}, Periode: ${r.periodKey}): Data karyawan periode ini sudah ada di database.`
           });
         }
       }
 
-      // Blokir sebagai duplikat DB jika seluruh baris valid di file memang sudah ada identik di database
-      if (matchedDbItems.length === parsedRows.length) {
+      // Blokir sebagai duplikat DB jika seluruh baris efektif di file memang sudah ada identik di database
+      if (effectiveRows.length > 0 && matchedDbItems.length === effectiveRows.length) {
         for (const item of matchedDbItems) {
           dbDuplicates.push(item.msg);
           invalidRowLabels.add(item.label);
@@ -666,7 +726,8 @@ const validateEmployees = async (workbook, fileName) => {
 
   return {
     ...report,
-    periodPolicy
+    periodPolicy,
+    mutationSummary
   };
 };
 

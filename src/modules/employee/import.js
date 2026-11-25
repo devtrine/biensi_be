@@ -3,36 +3,70 @@ const repository = require('./repository');
 const prisma = require('../../config/database');
 const { IMPORT_MODULES, logImportBatch, MONTH_NAMES } = require('../../utils/importBatch');
 
-// Ubah serial Excel ke Tanggal
-const excelDateToJSDate = (serial) => {
-  if (!serial) return null;
-  if (serial instanceof Date) return isNaN(serial.getTime()) ? null : serial;
+const INDO_MONTH_TO_EN = {
+  januari: 'January', jan: 'Jan',
+  februari: 'February', feb: 'Feb', peb: 'Feb',
+  maret: 'March', mar: 'Mar',
+  april: 'April', apr: 'Apr',
+  mei: 'May',
+  juni: 'June', jun: 'Jun',
+  juli: 'July', jul: 'Jul',
+  agustus: 'August', agu: 'Aug', agt: 'Aug',
+  september: 'September', sep: 'Sep', sept: 'Sep',
+  oktober: 'October', okt: 'Oct',
+  november: 'November', nov: 'Nov', nop: 'Nov',
+  desember: 'December', des: 'Dec'
+};
 
-  let date;
-  if (typeof serial === 'string') {
-    const trimmed = serial.trim();
-    if (!trimmed) return null;
-    // Dukungan format DD/MM/YYYY atau DD-MM-YYYY
-    const dmyMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
-    if (dmyMatch) {
-      date = new Date(Date.UTC(parseInt(dmyMatch[3], 10), parseInt(dmyMatch[2], 10) - 1, parseInt(dmyMatch[1], 10)));
-    } else {
-    const enDateStr = trimmed
-      .replace(/\bjanuari\b/i, 'January').replace(/\bfebruari\b/i, 'February')
-      .replace(/\bmaret\b/i, 'March').replace(/\bmei\b/i, 'May')
-      .replace(/\bjuni\b/i, 'June').replace(/\bjuli\b/i, 'July')
-      .replace(/\bagustus\b/i, 'August').replace(/\boktober\b/i, 'October')
-      .replace(/\bdesember\b/i, 'December');
-    date = new Date(enDateStr);
-    }
-  } else if (typeof serial === 'number') {
-    const utc_days = Math.floor(serial - 25569);
-    date = new Date(utc_days * 86400 * 1000);
-  } else {
-    date = new Date(serial);
+// Ubah serial Excel ke Tanggal (UTC 12:00:00 agar kebal geser timezone)
+const excelDateToJSDate = (serial) => {
+  if (serial === undefined || serial === null || serial === '') return null;
+  if (serial instanceof Date) {
+    if (isNaN(serial.getTime()) || serial.getFullYear() < 1940 || serial.getFullYear() > 2100) return null;
+    return new Date(Date.UTC(serial.getFullYear(), serial.getMonth(), serial.getDate(), 12, 0, 0));
   }
 
-  return (date instanceof Date && !isNaN(date.getTime())) ? date : null;
+  if (typeof serial === 'number') {
+    if (serial < 15000 || serial > 80000) return null;
+    const d = new Date(Math.round((serial - 25569) * 86400 * 1000));
+    if (isNaN(d.getTime()) || d.getUTCFullYear() < 1940 || d.getUTCFullYear() > 2100) return null;
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0));
+  }
+
+  const trimmed = String(serial).replace(/\u00A0/g, ' ').trim();
+  if (!trimmed || trimmed === '-' || trimmed === '0') return null;
+
+  // Dukungan format DD/MM/YYYY atau DD-MM-YYYY
+  const dmyMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10);
+    const year = parseInt(dmyMatch[3], 10);
+    if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1940 || year > 2100) return null;
+    const d = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+    return (d.getUTCMonth() === month - 1 && d.getUTCDate() === day) ? d : null;
+  }
+
+  // Dukungan format ISO YYYY-MM-DD / YYYY/MM/DD
+  const isoMatch = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1940 || year > 2100) return null;
+    const d = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+    return (d.getUTCMonth() === month - 1 && d.getUTCDate() === day) ? d : null;
+  }
+
+  let converted = trimmed;
+  for (const [indo, en] of Object.entries(INDO_MONTH_TO_EN)) {
+    converted = converted.replace(new RegExp(`\\b${indo}\\b`, 'ig'), en);
+  }
+  converted = converted.replace(/^(\d{1,2})[-/\s]([A-Za-z]{3})[-/\s](\d{2})$/, '$1 $2 20$3');
+
+  const parsed = new Date(converted);
+  if (isNaN(parsed.getTime()) || parsed.getFullYear() < 1940 || parsed.getFullYear() > 2100) return null;
+  return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 12, 0, 0));
 };
 
 // Menghapus semua spasi, simbol, & enter dari nama kolom Excel
@@ -305,7 +339,7 @@ const processExcelImport = async (filePath, originalFilename = '') => {
       birthDate: excelDateToJSDate(getValue(row, 'tanggallahir') || getValue(row, 'tanggallahir5') || getValue(row, 'tgllahir') || getValue(row, 'birthdate')),
       educationLevel: getValue(row, 'pendidikanterakhir') || getValue(row, 'pendidikan') || null,
       employmentType: getValue(row, 'statuskaryawan') || getValue(row, 'employmenttype') || 'KONTRAK',
-      joinDate: excelDateToJSDate(getValue(row, 'tglmskkrj') || getValue(row, 'tanggalmasukkerja') || getValue(row, 'joindate')) || new Date(),
+      joinDate: excelDateToJSDate(getValue(row, 'tglmskkrj') || getValue(row, 'tanggalmasukkerja') || getValue(row, 'joindate')),
       endDate: excelDateToJSDate(getValue(row, 'tglhabiskontrak') || getValue(row, 'tanggalhabiskontrak') || getValue(row, 'enddate')),
       baseSalary: getValue(row, 'labourcostperemployee') || getValue(row, 'basesalary') || getValue(row, 'gajipokok') || getValue(row, 'labourcost'),
 
@@ -400,6 +434,16 @@ const processExcelImport = async (filePath, originalFilename = '') => {
     }
   }
 
+  const empPeriodGroups = new Map();
+  for (const r of formattedData) {
+    if (!r._resolved) continue;
+    const empKey = `${String(r._resolved.employeeNo || r.employeeNo || '').trim().toUpperCase()}|${r.periodYear}-${r.periodMonth}`;
+    if (!empPeriodGroups.has(empKey)) empPeriodGroups.set(empKey, new Set());
+    empPeriodGroups.get(empKey).add(r.storeName || 'HO');
+  }
+  const uniqueHeadcount = empPeriodGroups.size;
+  const mutatedEmployeeCount = Array.from(empPeriodGroups.values()).filter(stores => stores.size >= 2).length;
+
   importResult.fileName = safeFileName;
   importResult.period = {
     year: targetYear,
@@ -408,6 +452,8 @@ const processExcelImport = async (filePath, originalFilename = '') => {
     label: `${MONTH_NAMES[targetMonth - 1]} ${targetYear}`
   };
   importResult.loggedModules = loggedModules;
+  importResult.uniqueHeadcount = uniqueHeadcount;
+  importResult.mutatedEmployeeCount = mutatedEmployeeCount;
 
   return importResult;
 };

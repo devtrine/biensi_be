@@ -57,16 +57,21 @@ const importEmployees = async (req, res) => {
     if (guard.handled) return;
 
     const result = await importService.processExcelImport(req.file.path, req.file.originalname);
+    const mutationInfo = result.mutatedEmployeeCount > 0
+      ? ` (${result.uniqueHeadcount} headcount aktif unik dari ${result.mutatedEmployeeCount} NIK mutasi)`
+      : '';
 
     res.status(200).json({
       success: true,
-      message: `Import selesai. Sukses: ${result.sukses}, Gagal: ${result.gagal}`,
+      message: `Import selesai. Sukses: ${result.sukses}, Gagal: ${result.gagal}${mutationInfo}`,
       data: {
         fileName: result.fileName || req.file.originalname,
         period: result.period || guard.periodPolicy?.primaryPeriod || null,
         modules: result.loggedModules || [],
         sukses: result.sukses,
-        gagal: result.gagal
+        gagal: result.gagal,
+        uniqueHeadcount: result.uniqueHeadcount ?? result.sukses,
+        mutatedEmployeeCount: result.mutatedEmployeeCount ?? 0
       },
       errors: result.errorList
     });
