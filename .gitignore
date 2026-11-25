@@ -22,4 +22,4 @@ ehthumbs.db
 *.db-journal
 
 # unit test
-test/
+tests/

@@ -1,6 +1,23 @@
 const xlsx = require('xlsx');
 const prisma = require('../config/database');
-const { enforcePeriodPolicy } = require('./importBatch');
+const {
+  IMPORT_MODULES,
+  enforcePeriodPolicy,
+  summarizeDetectedPeriods,
+  findDuplicateFileImports
+} = require('./importBatch');
+
+const VALIDATOR_TO_BATCH_MODULES = {
+  employees: [IMPORT_MODULES.DEMOGRAFI_HO, IMPORT_MODULES.DEMOGRAFI_STORE],
+  movement: [IMPORT_MODULES.MOVEMENT],
+  compliance: [IMPORT_MODULES.COMPLIANCE],
+  sp: [IMPORT_MODULES.SP],
+  'sp-rekap': [IMPORT_MODULES.SP_REKAP],
+  fraud: [IMPORT_MODULES.FRAUD],
+  bipartit: [IMPORT_MODULES.BIPARTIT],
+  attendance: [IMPORT_MODULES.ATTENDANCE],
+  sales: [IMPORT_MODULES.SALES]
+};
 
 const MONTH_MAP = {
   jan: 1, januari: 1, january: 1,
@@ -505,10 +522,11 @@ const validateEmployees = async (workbook, fileName) => {
 
       const store = cleanStoreName(getRowVal(row, 'namatoko', 'store', 'storename', 'showroom', 'toko'));
       const scopeTag = store ? 'STORE' : 'HO';
-      const posName = (cleanStr(getRowVal(row, 'jabatan', 'posisi', 'position')) || '').toUpperCase();
-      const levelName = (cleanStr(getRowVal(row, 'leveljabatan', 'employeelevel', 'level')) || 'STAFF').toUpperCase();
-      const divName = (cleanStr(getRowVal(row, 'divisinewsyfa', 'divisinew', 'divisi', 'division')) || '').toUpperCase();
-      const deptName = (cleanStr(getRowVal(row, 'departemennewbyhrbp', 'departemen', 'department')) || '').toUpperCase();
+      const normUpper = (v, maxLen = 95) => (cleanStr(v) || '').replace(/\s+/g, ' ').toUpperCase().substring(0, maxLen);
+      const posName = normUpper(getRowVal(row, 'jabatan', 'posisi', 'position'), 95);
+      const levelName = normUpper(getRowVal(row, 'leveljabatan', 'employeelevel', 'level'), 50) || 'STAFF';
+      const divName = normUpper(getRowVal(row, 'divisinewsyfa', 'divisinew', 'divisi', 'division'), 95);
+      const deptName = normUpper(getRowVal(row, 'departemennewbyhrbp', 'departemen', 'department'), 95);
       const salaryNum = salRes.valid && salRes.num !== null ? Math.round(salRes.num) : null;
 
       parsedRows.push({
@@ -516,7 +534,7 @@ const validateEmployees = async (workbook, fileName) => {
         sheetName,
         rowNum,
         empNo: empNoClean,
-        fullName: (nameClean || '').toUpperCase(),
+        fullName: (nameClean || '').replace(/\s+/g, ' ').toUpperCase().substring(0, 190),
         posName,
         levelName,
         divName,
@@ -591,9 +609,9 @@ const validateEmployees = async (workbook, fileName) => {
         const existing = snapLookup.get(`${pId}|${r.empNo}|${r.scopeTag}`);
         if (!existing) continue;
 
-        const dbName = (existing.employee?.fullName || '').trim().toUpperCase();
-        const dbPos = (existing.position?.name || '').trim().toUpperCase();
-        const dbLevel = (existing.employeeLevel || existing.position?.employeeLevel || 'STAFF').trim().toUpperCase();
+        const dbName = (existing.employee?.fullName || '').replace(/\s+/g, ' ').trim().toUpperCase();
+        const dbPos = (existing.position?.name || '').replace(/\s+/g, ' ').trim().toUpperCase();
+        const dbLevel = (existing.employeeLevel || existing.position?.employeeLevel || 'STAFF').replace(/\s+/g, ' ').trim().toUpperCase();
         const dbSalary = existing.budgetLabourCost !== null && existing.budgetLabourCost !== undefined
           ? Math.round(Number(existing.budgetLabourCost))
           : null;
@@ -744,6 +762,18 @@ const validateMovement = async (workbook, fileName) => {
 
       const pKey = `${moveDateRes.date.getUTCFullYear()}-${String(moveDateRes.date.getUTCMonth() + 1).padStart(2, '0')}`;
       detectedPeriods.add(pKey);
+
+      const rawBulan = getRowVal(row, 'bulan', 'month', 'periode');
+      const rawTahun = getRowVal(row, 'tahun', 'year');
+      if (rawBulan) {
+        const colPeriod = parseMonthYearStrict(rawBulan, rawTahun, {
+          year: moveDateRes.date.getUTCFullYear(),
+          month: moveDateRes.date.getUTCMonth() + 1,
+        });
+        if (colPeriod.valid && colPeriod.year && colPeriod.month) {
+          detectedPeriods.add(`${colPeriod.year}-${String(colPeriod.month).padStart(2, '0')}`);
+        }
+      }
 
       parsedRows.push({
         label,
@@ -1164,23 +1194,35 @@ const validateSp = async (workbook, fileName) => {
 
       const rawStart = col.startDate !== undefined ? row[col.startDate] : null;
       const rawPeriode = col.periode !== undefined ? row[col.periode] : null;
-      const startRes = rawStart ? parseStrictDate(rawStart, new Date().getFullYear()) : parseStrictDate(rawPeriode, new Date().getFullYear());
-      if (!startRes.valid) {
-        rowErrors.push(`${label} (${empName}): Format Start Date / Periode tidak valid ("${startRes.raw}").`);
+      const fallbackYear = new Date().getFullYear();
+      const startRes = rawStart ? parseStrictDate(rawStart, fallbackYear) : { valid: true, date: null };
+      const periodeRes = rawPeriode ? parseStrictDate(rawPeriode, fallbackYear) : { valid: true, date: null };
+      if (!rawStart && !rawPeriode) {
+        rowErrors.push(`${label} (${empName}): Start Date / Periode kosong.`);
+      } else {
+        if (rawStart && !startRes.valid) rowErrors.push(`${label} (${empName}): Format Start Date tidak valid ("${startRes.raw}").`);
+        if (rawPeriode && !periodeRes.valid) rowErrors.push(`${label} (${empName}): Format Periode tidak valid ("${periodeRes.raw}").`);
       }
 
-      const endRes = parseStrictDate(col.endDate !== undefined ? row[col.endDate] : null, new Date().getFullYear());
+      const endRes = parseStrictDate(col.endDate !== undefined ? row[col.endDate] : null, fallbackYear);
       if (!endRes.valid) {
         rowErrors.push(`${label} (${empName}): Format End Date tidak valid ("${endRes.raw}").`);
       }
-      if (startRes.date && endRes.date && endRes.date < startRes.date) {
+      const effStart = startRes.date || periodeRes.date;
+      if (effStart && endRes.date && endRes.date < effStart) {
         rowErrors.push(`${label} (${empName}): End Date lebih awal dari Start Date.`);
       }
 
-      const effDate = startRes.date || endRes.date;
-      if (effDate) {
-        detectedPeriods.add(`${effDate.getUTCFullYear()}-${String(effDate.getUTCMonth() + 1).padStart(2, '0')}`);
+      if (periodeRes.date) {
+        detectedPeriods.add(`${periodeRes.date.getUTCFullYear()}-${String(periodeRes.date.getUTCMonth() + 1).padStart(2, '0')}`);
       }
+      if (startRes.date) {
+        detectedPeriods.add(`${startRes.date.getUTCFullYear()}-${String(startRes.date.getUTCMonth() + 1).padStart(2, '0')}`);
+      }
+      if (!periodeRes.date && !startRes.date && endRes.date) {
+        detectedPeriods.add(`${endRes.date.getUTCFullYear()}-${String(endRes.date.getUTCMonth() + 1).padStart(2, '0')}`);
+      }
+      const effDate = startRes.date || periodeRes.date || endRes.date;
 
       parsedRows.push({
         label,
@@ -1414,9 +1456,18 @@ const validateFraud = async (workbook, fileName) => {
       const empNo = col.empNo !== undefined ? cleanStr(row[col.empNo]) : null;
       const storeClean = col.store !== undefined ? cleanStoreName(row[col.store]) : null;
 
-      const startRes = parseStrictDate(col.startDate !== undefined ? row[col.startDate] : (col.periode !== undefined ? row[col.periode] : null), new Date().getFullYear());
-      const auditRes = parseStrictDate(col.auditDate !== undefined ? row[col.auditDate] : null, new Date().getFullYear());
-      if (!startRes.valid) rowErrors.push(`${label} (${empName}): Format Start Date / Periode tidak valid ("${startRes.raw}").`);
+      const rawStart = col.startDate !== undefined ? row[col.startDate] : null;
+      const rawPeriode = col.periode !== undefined ? row[col.periode] : null;
+      const fallbackYear = new Date().getFullYear();
+      const startRes = rawStart ? parseStrictDate(rawStart, fallbackYear) : { valid: true, date: null };
+      const periodeRes = rawPeriode ? parseStrictDate(rawPeriode, fallbackYear) : { valid: true, date: null };
+      const auditRes = parseStrictDate(col.auditDate !== undefined ? row[col.auditDate] : null, fallbackYear);
+      if (!rawStart && !rawPeriode) {
+        rowErrors.push(`${label} (${empName}): Start Date / Periode kosong.`);
+      } else {
+        if (rawStart && !startRes.valid) rowErrors.push(`${label} (${empName}): Format Start Date tidak valid ("${startRes.raw}").`);
+        if (rawPeriode && !periodeRes.valid) rowErrors.push(`${label} (${empName}): Format Periode tidak valid ("${periodeRes.raw}").`);
+      }
       if (!auditRes.valid) rowErrors.push(`${label} (${empName}): Format Tgl Audit tidak valid ("${auditRes.raw}").`);
 
       const bakbRes = parseStrictNumber(row[col.bakb], { zeroTokens: FRAUD_ZERO_TOKENS });
@@ -1424,8 +1475,10 @@ const validateFraud = async (workbook, fileName) => {
       const qtyRes = col.selisihQty !== undefined ? parseStrictNumber(row[col.selisihQty], { zeroTokens: FRAUD_ZERO_TOKENS }) : { valid: true, num: 0 };
       if (!qtyRes.valid) rowErrors.push(`${label} (${empName}): Selisih Qty bukan angka valid ("${qtyRes.raw}").`);
 
-      const effDate = startRes.date || auditRes.date;
-      if (effDate) detectedPeriods.add(`${effDate.getUTCFullYear()}-${String(effDate.getUTCMonth() + 1).padStart(2, '0')}`);
+      if (periodeRes.date) detectedPeriods.add(`${periodeRes.date.getUTCFullYear()}-${String(periodeRes.date.getUTCMonth() + 1).padStart(2, '0')}`);
+      if (startRes.date) detectedPeriods.add(`${startRes.date.getUTCFullYear()}-${String(startRes.date.getUTCMonth() + 1).padStart(2, '0')}`);
+      if (!periodeRes.date && !startRes.date && auditRes.date) detectedPeriods.add(`${auditRes.date.getUTCFullYear()}-${String(auditRes.date.getUTCMonth() + 1).padStart(2, '0')}`);
+      const effDate = startRes.date || periodeRes.date || auditRes.date;
 
       parsedRows.push({
         label,
@@ -1955,6 +2008,49 @@ const validateImportFile = async (moduleKey, filePath, originalFilename = '', op
       confirmStep: options.confirmStep || 0
     });
   }
+
+  const periods = report.periodPolicy?.periods?.length
+    ? report.periodPolicy.periods
+    : summarizeDetectedPeriods(report.summary?.detectedPeriods || []);
+  const dupFileCheck = await findDuplicateFileImports({
+    moduleKeys: VALIDATOR_TO_BATCH_MODULES[moduleKey] || [],
+    fileName: originalFilename,
+    periods
+  });
+
+  const hasHardErrors =
+    (report.summary?.errorCount || 0) > 0 ||
+    (report.summary?.fileDuplicateCount || 0) > 0 ||
+    (report.summary?.totalRows || 0) === 0 ||
+    (moduleKey === 'employees' && report.periodPolicy && !report.periodPolicy.allowed);
+  const isDbDuplicate = (report.summary?.dbDuplicateCount || 0) > 0;
+
+  if (!hasHardErrors && (dupFileCheck.isDuplicateFile || isDbDuplicate)) {
+    const matchedPeriods = dupFileCheck.matchedPeriods.length > 0
+      ? dupFileCheck.matchedPeriods
+      : periods.map(p => ({
+          key: p.key,
+          year: p.year,
+          month: p.month,
+          label: p.label,
+          fileName: originalFilename,
+          uploadedAt: null,
+          totalRecords: report.summary?.totalRows || 0
+        }));
+    const labels = matchedPeriods.map(p => p.label).join(', ');
+    report.reimportWarning = {
+      isDuplicateFile: dupFileCheck.isDuplicateFile,
+      isDbDuplicate,
+      canReimport: true,
+      fileName: originalFilename,
+      matchedPeriods,
+      message: dupFileCheck.message ||
+        `Data dari file "${originalFilename}" sudah pernah dimasukkan pada bulan ${labels || '-'}. Apakah Anda yakin ingin memasukkan lagi file yang sama?`
+    };
+  } else {
+    report.reimportWarning = null;
+  }
+
   return report;
 };
 
@@ -1962,6 +2058,7 @@ const validateImportFile = async (moduleKey, filePath, originalFilename = '', op
 const runDryRunOrGuard = async (req, res, moduleKey) => {
   const isDryRun = String(req.query.dryRun || '').toLowerCase() === 'true';
   const confirmStep = Number(req.body?.confirmStep ?? req.query?.confirmStep ?? 0);
+  const allowReimport = String(req.body?.allowReimport ?? req.query?.allowReimport ?? '').toLowerCase() === 'true';
   const validation = await validateImportFile(moduleKey, req.file.path, req.file.originalname, { confirmStep });
   const periodPolicy = validation.periodPolicy || null;
 
@@ -1973,11 +2070,31 @@ const runDryRunOrGuard = async (req, res, moduleKey) => {
     return { handled: true, validation, periodPolicy };
   }
 
-  if (!validation.canProceed) {
+  const hasHardErrors =
+    (validation.summary?.errorCount || 0) > 0 ||
+    (validation.summary?.fileDuplicateCount || 0) > 0 ||
+    (validation.summary?.totalRows || 0) === 0 ||
+    (moduleKey === 'employees' && periodPolicy && !periodPolicy.allowed);
+
+  if (hasHardErrors || (!validation.canProceed && !validation.reimportWarning)) {
     res.status(400).json({
       ...validation,
       periodPolicy,
       success: false
+    });
+    return { handled: true, validation, periodPolicy };
+  }
+
+  if (validation.reimportWarning && !allowReimport) {
+    res.status(200).json({
+      success: false,
+      dryRun: false,
+      canProceed: false,
+      requiresReimportConfirmation: true,
+      code: 'DUPLICATE_FILE_REIMPORT_CONFIRM',
+      message: validation.reimportWarning.message,
+      reimportWarning: validation.reimportWarning,
+      summary: validation.summary
     });
     return { handled: true, validation, periodPolicy };
   }

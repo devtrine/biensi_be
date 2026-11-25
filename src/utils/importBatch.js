@@ -285,10 +285,17 @@ const getImportStatusByYear = async ({ module, year }) => {
   });
 
   const latestByMonth = {};
+  const filesByMonth = {};
   batches.forEach(b => {
     const m = b.periodMonth || b.period?.month;
-    if (m >= 1 && m <= 12 && !latestByMonth[m]) {
-      latestByMonth[m] = b;
+    if (m >= 1 && m <= 12) {
+      if (!latestByMonth[m]) latestByMonth[m] = b;
+      if (b.fileName) {
+        if (!filesByMonth[m]) filesByMonth[m] = [];
+        if (!filesByMonth[m].includes(b.fileName)) {
+          filesByMonth[m].push(b.fileName);
+        }
+      }
     }
   });
 
@@ -403,11 +410,66 @@ const getImportStatusByYear = async ({ module, year }) => {
       status: isInputted ? 'SUDAH_DIINPUT' : 'BELUM_DIINPUT',
       isInputted,
       fileName: batch?.fileName || (legacy ? 'Data tersimpan (nama file belum tercatat)' : null),
+      files: filesByMonth[month] || (batch?.fileName ? [batch.fileName] : []),
       totalRecords: batch?.successRows ?? legacy?.count ?? 0,
       lastBatchId: batch?.id || null,
       uploadedAt: batch?.completedAt || null
     };
   });
+};
+
+/**
+ * Cek apakah file dengan nama yang sama sudah pernah diimport pada bulan yang sama
+ */
+const findDuplicateFileImports = async ({ moduleKeys = [], fileName = '', periods = [] }) => {
+  const safeFileName = String(fileName || '').trim();
+  if (!safeFileName || !Array.isArray(moduleKeys) || moduleKeys.length === 0) {
+    return { isDuplicateFile: false, fileName: safeFileName, matchedPeriods: [], message: null };
+  }
+
+  const periodFilters = (Array.isArray(periods) ? periods : [])
+    .filter(p => p && p.year && p.month)
+    .map(p => ({ periodYear: Number(p.year), periodMonth: Number(p.month) }));
+
+  const existingBatches = await prisma.importBatch.findMany({
+    where: {
+      module: { in: moduleKeys },
+      status: { in: ['SUCCESS', 'PARTIAL'] },
+      fileName: { equals: safeFileName, mode: 'insensitive' },
+      ...(periodFilters.length > 0 ? { OR: periodFilters } : {})
+    },
+    orderBy: { completedAt: 'desc' }
+  });
+
+  const matchedMap = new Map();
+  for (const b of existingBatches) {
+    if (!b.periodYear || !b.periodMonth) continue;
+    const key = `${b.periodYear}-${String(b.periodMonth).padStart(2, '0')}`;
+    if (!matchedMap.has(key)) {
+      matchedMap.set(key, {
+        key,
+        year: b.periodYear,
+        month: b.periodMonth,
+        label: `${MONTH_NAMES[b.periodMonth - 1]} ${b.periodYear}`,
+        fileName: b.fileName,
+        uploadedAt: b.completedAt || b.createdAt || null,
+        totalRecords: b.successRows ?? b.totalRows ?? 0
+      });
+    }
+  }
+
+  const matchedPeriods = Array.from(matchedMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+  const isDuplicateFile = matchedPeriods.length > 0;
+  const labels = matchedPeriods.map(p => p.label).join(', ');
+
+  return {
+    isDuplicateFile,
+    fileName: safeFileName,
+    matchedPeriods,
+    message: isDuplicateFile
+      ? `File "${safeFileName}" sudah pernah dimasukkan pada bulan ${labels}. Apakah Anda yakin ingin memasukkan lagi file yang sama?`
+      : null
+  };
 };
 
 module.exports = {
@@ -417,5 +479,6 @@ module.exports = {
   summarizeDetectedPeriods,
   enforcePeriodPolicy,
   logImportBatch,
-  getImportStatusByYear
+  getImportStatusByYear,
+  findDuplicateFileImports
 };
