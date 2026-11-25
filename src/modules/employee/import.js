@@ -17,7 +17,13 @@ const excelDateToJSDate = (serial) => {
     if (dmyMatch) {
       date = new Date(Date.UTC(parseInt(dmyMatch[3], 10), parseInt(dmyMatch[2], 10) - 1, parseInt(dmyMatch[1], 10)));
     } else {
-      date = new Date(trimmed);
+    const enDateStr = trimmed
+      .replace(/\bjanuari\b/i, 'January').replace(/\bfebruari\b/i, 'February')
+      .replace(/\bmaret\b/i, 'March').replace(/\bmei\b/i, 'May')
+      .replace(/\bjuni\b/i, 'June').replace(/\bjuli\b/i, 'July')
+      .replace(/\bagustus\b/i, 'August').replace(/\boktober\b/i, 'October')
+      .replace(/\bdesember\b/i, 'December');
+    date = new Date(enDateStr);
     }
   } else if (typeof serial === 'number') {
     const utc_days = Math.floor(serial - 25569);
@@ -295,8 +301,8 @@ const processExcelImport = async (filePath, originalFilename = '') => {
       sheetName: row._sheetName || null,
       employeeNo: String(getValue(row, 'employeeno') || getValue(row, 'nik') || getValue(row, 'idkaryawan') || ''),
       fullName: getValue(row, 'namakaryawan') || getValue(row, 'nama') || getValue(row, 'name') || 'TIDAK ADA NAMA',
-      gender: getValue(row, 'jeniskelamin') || getValue(row, 'gender') || getValue(row, 'jk') || getValue(row, 'kelamin') || getValue(row, 'sex') || getValue(row, 'lp') || null,
-      birthDate: excelDateToJSDate(getValue(row, 'tanggallahir') || getValue(row, 'tgllahir') || getValue(row, 'birthdate')),
+      gender: getValue(row, 'jeniskelamin') || getValue(row, 'jeniskelamin4') || getValue(row, 'gender') || getValue(row, 'jk') || getValue(row, 'kelamin') || getValue(row, 'sex') || getValue(row, 'lp') || null,
+      birthDate: excelDateToJSDate(getValue(row, 'tanggallahir') || getValue(row, 'tanggallahir5') || getValue(row, 'tgllahir') || getValue(row, 'birthdate')),
       educationLevel: getValue(row, 'pendidikanterakhir') || getValue(row, 'pendidikan') || null,
       employmentType: getValue(row, 'statuskaryawan') || getValue(row, 'employmenttype') || 'KONTRAK',
       joinDate: excelDateToJSDate(getValue(row, 'tglmskkrj') || getValue(row, 'tanggalmasukkerja') || getValue(row, 'joindate')) || new Date(),
@@ -470,8 +476,8 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
       // Filter baris data KHUSUS yang tercatat pada bulan & tahun ini
       const rowsForThisPeriod = formattedData.filter(r => r.periodYear === yr && r.periodMonth === m);
 
-      const seenEmpIds = new Set();
-      const snapRows = [];
+      // Pakai Map agar jika 1 NIK mutasi toko di bulan yang sama, baris terakhir otomatis menimpa baris sebelumnya
+      const snapByEmpId = new Map();
 
       for (const row of rowsForThisPeriod) {
         const resolved = row._resolved;
@@ -480,11 +486,6 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
           empMap.get(cleanNo) ||
           (!resolved ? (empMap.get(`${cleanNo}-STR`) || empMap.get(`${cleanNo}-HO`)) : null);
         if (!emp) continue;
-        if (seenEmpIds.has(emp.id)) {
-          warnings.push(`Baris ${row.rowNumber || 'Data'} (${yr}-${String(m).padStart(2, '0')}, NIK: ${cleanNo}): NIK duplikat dalam periode yang sama sehingga dilewati pada snapshot.`);
-          continue;
-        }
-        seenEmpIds.add(emp.id);
 
         const rowEndDate = resolved ? resolved.endDate : emp.endDate;
         let status = 'ACTIVE';
@@ -500,7 +501,7 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
             ? (typeof row.baseSalary === 'number' ? row.baseSalary : parseFloat(String(row.baseSalary).replace(/[^0-9.-]+/g, '')) || 0)
             : (emp.baseSalary ? parseFloat(emp.baseSalary) : 0));
 
-        snapRows.push({
+        snapByEmpId.set(emp.id, {
           periodId: period.id,
           employeeId: emp.id,
           divisionId: resolved ? resolved.divisionId : emp.divisionId,
@@ -519,6 +520,7 @@ const syncSnapshotsAfterEmployeeImport = async (formattedData) => {
         });
       }
 
+      const snapRows = Array.from(snapByEmpId.values());
       if (snapRows.length === 0) continue;
 
       // Hitung komposisi karyawan HO vs Toko yang diunggah untuk periode ini

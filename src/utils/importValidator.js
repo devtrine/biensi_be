@@ -549,13 +549,13 @@ const validateEmployees = async (workbook, fileName) => {
     });
   }
 
-  // Cek duplikat internal file (NIK + Scope + Periode sama)
+// Cek duplikat internal file (NIK + Scope + Toko + Periode sama; beda toko diizinkan untuk kasus mutasi)
   const seenFile = new Map();
   for (const r of parsedRows) {
-    const key = `${r.empNo}|${r.scopeTag}|${r.periodKey}`;
+    const key = `${r.empNo}|${r.scopeTag}|${r.store}|${r.periodKey}`;
     if (seenFile.has(key)) {
       const first = seenFile.get(key);
-      fileDuplicates.push(`${r.label} (NIK: ${r.empNo}, Periode: ${r.periodKey}): Duplikat di dalam file dengan ${first.label}.`);
+      fileDuplicates.push(`${r.label} (NIK: ${r.empNo}, Toko: ${r.store || 'HO'}, Periode: ${r.periodKey}): Duplikat di dalam file dengan ${first.label}.`);
       invalidRowLabels.add(r.label);
     } else {
       seenFile.set(key, r);
