@@ -17,7 +17,20 @@ const createPeriod = async (data) => {
 };
 
 const getAllPeriods = async () => {
-  return await prisma.reportingPeriod.findMany({ orderBy: [{ year: 'desc' }, { month: 'desc' }] });
+  return await prisma.reportingPeriod.findMany({
+    where: {
+      year: { gte: 2020, lte: 2100 },
+      OR: [
+        { employeeSnaps: { some: {} } },
+        { salesMonthly: { some: {} } },
+        { attendanceAggregate: { some: {} } },
+        { spAggregateMonthly: { some: {} } },
+        { kpiPositions: { some: {} } },
+        { importBatches: { some: {} } }
+      ]
+    },
+    orderBy: [{ year: 'desc' }, { month: 'desc' }]
+  });
 };
 
 const getAllAttendance = async () => {

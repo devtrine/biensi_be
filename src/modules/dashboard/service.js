@@ -530,14 +530,17 @@ const summarizeEmployeeGroup = (empList, periodYear, periodMonth, totalSales = 0
   };
 };
 
-const getDashboardSummary = async (periodId, scope = 'Corporate') => {
-  const period = await prisma.reportingPeriod.findUnique({ where: { id: periodId } });
+const getDashboardSummary = async (periodOrId, scope = 'Corporate') => {
+  const period = typeof periodOrId === 'object' && periodOrId !== null
+    ? periodOrId
+    : await prisma.reportingPeriod.findUnique({ where: { id: periodOrId } });
   if (!period) throw new Error('Periode tidak ditemukan');
 
   const prevDecPeriod = await prisma.reportingPeriod.findFirst({
     where: { year: period.year - 1, month: 12 }
   });
 
+  const periodId = period.id || null;
   const [rawSnapshots, prevDecRawSnapshots, attendance, attendanceByScope, sales] = await Promise.all([
     repository.getMonthlySnapshots(periodId, period.year),
     prevDecPeriod ? repository.getMonthlySnapshots(prevDecPeriod.id, period.year - 1) : Promise.resolve([]),
@@ -1148,7 +1151,7 @@ const year = parseInt(filters.year, 10) || new Date().getFullYear();
 
   // Jalankan secara paralel (termasuk menarik ringkasan SP, Hubungan Industrial, Perizinan WLKP/PP/K3, & daftar tahun dinamis)
   const [summaryData, storeData, turnoverData, industrialAndSp, availableYears] = await Promise.all([
-    getDashboardSummary(period.id, scope),
+    getDashboardSummary(period, scope),
     getStorePerformanceDashboard(period.id, year),
     getTurnoverDashboard(year, month, scope),
     repository.getIndustrialAndSpSummary(year, month, spYear),
@@ -1179,7 +1182,8 @@ const year = parseInt(filters.year, 10) || new Date().getFullYear();
   const trajectoryPeriods = await prisma.reportingPeriod.findMany({
     where: {
       month: month,
-      year: { gte: 2020 }
+      year: { gte: 2020 },
+      employeeSnaps: { some: {} }
     },
     orderBy: { year: 'asc' }
   });

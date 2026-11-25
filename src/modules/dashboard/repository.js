@@ -5,22 +5,19 @@ const getPeriodByDate = async (year, month) => {
   const numYear = parseInt(year, 10) || new Date().getFullYear();
   const numMonth = parseInt(month, 10) || (new Date().getMonth() + 1);
 
-  let period = await prisma.reportingPeriod.findFirst({
+  const period = await prisma.reportingPeriod.findFirst({
     where: { year: numYear, month: numMonth }
   });
 
-  // Jika database baru di-reset dan belum ada periode sama sekali
   if (!period) {
-    const periodStart = new Date(Date.UTC(numYear, numMonth - 1, 1));
-    const periodEnd = new Date(Date.UTC(numYear, numMonth, 0));
-    period = await prisma.reportingPeriod.create({
-      data: {
-        year: numYear,
-        month: numMonth,
-        periodStart,
-        periodEnd
-      }
-    });
+    return {
+      id: null,
+      year: numYear,
+      month: numMonth,
+      periodStart: new Date(Date.UTC(numYear, numMonth - 1, 1)),
+      periodEnd: new Date(Date.UTC(numYear, numMonth, 0)),
+      isVirtual: true
+    };
   }
 
   return period;
@@ -35,6 +32,8 @@ const getPeriodById = async (periodId) => {
 
 // Ambil Snapshot Karyawan
 const getMonthlySnapshots = async (periodId, year) => {
+  if (!periodId) return [];
+
   const includeRel = {
     division: true,
     department: true,
@@ -78,10 +77,12 @@ const getAttendanceByPeriod = async (periodId, scope = 'Corporate', year = null)
     whereClause.scope = 'STORE';
   }
 
-  let attendance = await prisma.attendanceAggregateMonthly.findFirst({
-    where: whereClause,
-    orderBy: { createdAt: 'desc' }
-  });
+  let attendance = periodId
+    ? await prisma.attendanceAggregateMonthly.findFirst({
+        where: whereClause,
+        orderBy: { createdAt: 'desc' }
+      })
+    : null;
 
   if (!attendance && year) {
     const latestAttPeriod = await prisma.reportingPeriod.findFirst({
@@ -108,11 +109,13 @@ const getAttendanceByPeriod = async (periodId, scope = 'Corporate', year = null)
 
 // Ambil Sales per Periode normalnya ngambil data terakhir
 const getSalesByPeriod = async (periodId, year = null) => {
-  const sales = await prisma.salesMonthly.findMany({
-    where: { periodId },
-    include: { store: true },
-    orderBy: { netSales: 'desc' }
-  });
+  const sales = periodId
+    ? await prisma.salesMonthly.findMany({
+        where: { periodId },
+        include: { store: true },
+        orderBy: { netSales: 'desc' }
+      })
+    : [];
 
   let validSales = sales.filter(s => {
     const name = String(s.store?.storeName || '').toUpperCase().trim();
@@ -583,10 +586,24 @@ const getIndustrialAndSpSummary = async (year, month = null, spYear = null) => {
 
 const getAvailableYears = async () => {
   const [periods, movements, discCases, irCases] = await Promise.all([
-    prisma.reportingPeriod.findMany({ select: { year: true }, distinct: ['year'] }),
+    prisma.reportingPeriod.findMany({
+      where: {
+        year: { gte: 2020, lte: 2100 },
+        OR: [
+          { employeeSnaps: { some: {} } },
+          { salesMonthly: { some: {} } },
+          { attendanceAggregate: { some: {} } },
+          { spAggregateMonthly: { some: {} } },
+          { kpiPositions: { some: {} } },
+          { importBatches: { some: {} } }
+        ]
+      },
+      select: { year: true },
+      distinct: ['year']
+    }),
     prisma.employeeMovement.findMany({ select: { movementDate: true } }),
     prisma.disciplinaryCase.findMany({ select: { startDate: true } }),
-    prisma.industrialRelationCase.findMany({ select: { startDate: true, endDate: true } })
+    prisma.industrialRelationCase.findMany({ select: { startDate: true } })
   ]);
 
   const yearSet = new Set();
@@ -598,10 +615,7 @@ const getAvailableYears = async () => {
   periods.forEach(p => addYear(p.year));
   movements.forEach(m => { if (m.movementDate) addYear(new Date(m.movementDate).getUTCFullYear()); });
   discCases.forEach(c => { if (c.startDate) addYear(new Date(c.startDate).getUTCFullYear()); });
-  irCases.forEach(c => {
-    if (c.startDate) addYear(new Date(c.startDate).getUTCFullYear());
-    if (c.endDate) addYear(new Date(c.endDate).getUTCFullYear());
-  });
+  irCases.forEach(c => { if (c.startDate) addYear(new Date(c.startDate).getUTCFullYear()); });
 
   return Array.from(yearSet).sort((a, b) => b - a);
 };
