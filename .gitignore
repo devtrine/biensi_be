@@ -20,3 +20,6 @@ ehthumbs.db
 
 *.db
 *.db-journal
+
+# unit test
+test/

@@ -1,5 +1,5 @@
 const prisma = require('../../config/database');
-const { IMPORT_MODULES, getImportStatusByYear } = require('../../utils/importBatchHelper');
+const { IMPORT_MODULES, getImportStatusByYear } = require('../../utils/importBatch');
 
 const getYearlyStatus = async (moduleParam, yearParam) => {
   const moduleKey = String(moduleParam || '').toUpperCase().trim();

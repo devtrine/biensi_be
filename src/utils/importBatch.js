@@ -35,8 +35,10 @@ const resolvePeriodId = async (year, month) => {
   if (existing) return existing.id;
 
   try {
+    const periodStart = new Date(Date.UTC(numYear, numMonth - 1, 1));
+    const periodEnd = new Date(Date.UTC(numYear, numMonth, 0));
     const created = await prisma.reportingPeriod.create({
-      data: { year: numYear, month: numMonth },
+      data: { year: numYear, month: numMonth, periodStart, periodEnd },
       select: { id: true }
     });
     return created.id;
@@ -290,8 +292,17 @@ const getImportStatusByYear = async ({ module, year }) => {
     }
   });
 
-  // Fallback data lama di DB khusus Demografi (sebelum ImportBatch aktif)
+  // Fallback data lama di DB (sebelum ImportBatch aktif) agar status tetap akurat
   const legacyByMonth = {};
+  const yearStart = new Date(Date.UTC(numYear, 0, 1));
+  const yearEnd = new Date(Date.UTC(numYear, 11, 31, 23, 59, 59, 999));
+  const addLegacyCount = (m, count = 1, periodId = null) => {
+    if (m < 1 || m > 12) return;
+    if (!legacyByMonth[m]) legacyByMonth[m] = { periodId, count: 0 };
+    legacyByMonth[m].count += count;
+    if (!legacyByMonth[m].periodId && periodId) legacyByMonth[m].periodId = periodId;
+  };
+
   if (module === IMPORT_MODULES.DEMOGRAFI_HO || module === IMPORT_MODULES.DEMOGRAFI_STORE) {
     const periodsInYear = await prisma.reportingPeriod.findMany({
       where: { year: numYear },
@@ -314,6 +325,68 @@ const getImportStatusByYear = async ({ module, year }) => {
         if (p) legacyByMonth[p.month] = { periodId: p.id, count: g._count.id };
       });
     }
+  } else if (module === IMPORT_MODULES.ATTENDANCE || module === IMPORT_MODULES.SALES || module === IMPORT_MODULES.SP_REKAP) {
+    const periodsInYear = await prisma.reportingPeriod.findMany({
+      where: { year: numYear },
+      select: { id: true, month: true }
+    });
+    if (periodsInYear.length > 0) {
+      const model = module === IMPORT_MODULES.ATTENDANCE
+        ? prisma.attendanceAggregateMonthly
+        : module === IMPORT_MODULES.SALES
+          ? prisma.salesMonthly
+          : prisma.spAggregateMonthly;
+      const grouped = await model.groupBy({
+        by: ['periodId'],
+        where: { periodId: { in: periodsInYear.map(p => p.id) } },
+        _count: { id: true }
+      });
+      const periodMap = new Map(periodsInYear.map(p => [p.id, p]));
+      grouped.forEach(g => {
+        const p = periodMap.get(g.periodId);
+        if (p) addLegacyCount(p.month, g._count.id, p.id);
+      });
+    }
+  } else if (module === IMPORT_MODULES.MOVEMENT) {
+    const rows = await prisma.employeeMovement.findMany({
+      where: { movementDate: { gte: yearStart, lte: yearEnd } },
+      select: { movementDate: true }
+    });
+    rows.forEach(r => addLegacyCount(new Date(r.movementDate).getUTCMonth() + 1));
+  } else if (module === IMPORT_MODULES.SP) {
+    const rows = await prisma.disciplinaryCase.findMany({
+      where: { category: { not: 'Fraud & Audit' }, startDate: { gte: yearStart, lte: yearEnd } },
+      select: { startDate: true }
+    });
+    rows.forEach(r => { if (r.startDate) addLegacyCount(new Date(r.startDate).getUTCMonth() + 1); });
+  } else if (module === IMPORT_MODULES.FRAUD) {
+    const rows = await prisma.fraudCase.findMany({
+      where: {
+        OR: [
+          { caseDate: { gte: yearStart, lte: yearEnd } },
+          { auditDate: { gte: yearStart, lte: yearEnd } }
+        ]
+      },
+      select: { caseDate: true, auditDate: true }
+    });
+    rows.forEach(r => {
+      const d = r.caseDate || r.auditDate;
+      if (d) addLegacyCount(new Date(d).getUTCMonth() + 1);
+    });
+  } else if (module === IMPORT_MODULES.BIPARTIT) {
+    const rows = await prisma.industrialRelationCase.findMany({
+      where: {
+        OR: [
+          { startDate: { gte: yearStart, lte: yearEnd } },
+          { endDate: { gte: yearStart, lte: yearEnd } }
+        ]
+      },
+      select: { startDate: true, endDate: true }
+    });
+    rows.forEach(r => {
+      const d = r.startDate || r.endDate;
+      if (d) addLegacyCount(new Date(d).getUTCMonth() + 1);
+    });
   }
 
   return MONTH_NAMES.map((monthName, idx) => {

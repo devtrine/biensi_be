@@ -1,6 +1,6 @@
 const xlsx = require('xlsx');
 const prisma = require('../config/database');
-const { enforcePeriodPolicy } = require('./importBatchHelper');
+const { enforcePeriodPolicy } = require('./importBatch');
 
 const MONTH_MAP = {
   jan: 1, januari: 1, january: 1,
@@ -622,31 +622,18 @@ const validateEmployees = async (workbook, fileName) => {
   }
 
   const activeSheets = Array.from(new Set(parsedRows.map(r => r.sheetName).filter(Boolean)));
-    const periodPolicy = enforcePeriodPolicy({
-      mode: 'STRICT_SINGLE',
-      sheets: activeSheets.length > 0 ? activeSheets : targetSheets,
-      detectedPeriods,
-      parsedRows
-    });
+  const periodPolicy = enforcePeriodPolicy({
+    mode: 'STRICT_SINGLE',
+    sheets: activeSheets.length > 0 ? activeSheets : targetSheets,
+    detectedPeriods,
+    parsedRows
+  });
 
-    if (!periodPolicy.allowed) {
-      headerErrors.push(periodPolicy.message);
-    }
+  if (!periodPolicy.allowed) {
+    headerErrors.push(periodPolicy.message);
+  }
 
-    const report = buildReport({
-      moduleKey: 'employees',
-      fileName,
-      sheets: targetSheets,
-      detectedPeriods,
-      totalRows: totalDataRows,
-      invalidRowsCount: invalidRowLabels.size,
-      headerErrors,
-      rowErrors,
-      fileDuplicates,
-      dbDuplicates
-    });
-
-  return buildReport({
+  const report = buildReport({
     moduleKey: 'employees',
     fileName,
     sheets: targetSheets,
@@ -656,10 +643,13 @@ const validateEmployees = async (workbook, fileName) => {
     headerErrors,
     rowErrors,
     fileDuplicates,
-    dbDuplicates,
-    report,
-    periodPolicy
+    dbDuplicates
   });
+
+  return {
+    ...report,
+    periodPolicy
+  };
 };
 
 // =========================
@@ -1937,7 +1927,7 @@ const VALIDATORS = {
   sales: validateSales
 };
 
-const validateImportFile = async (moduleKey, filePath, originalFilename = '') => {
+const validateImportFile = async (moduleKey, filePath, originalFilename = '', options = {}) => {
   const fn = VALIDATORS[moduleKey];
   if (!fn) {
     throw new Error(`Modul validasi '${moduleKey}' tidak dikenali.`);
@@ -1956,25 +1946,24 @@ const validateImportFile = async (moduleKey, filePath, originalFilename = '') =>
       dbDuplicates: []
     });
   }
-  return await fn(workbook, originalFilename);
+  const report = await fn(workbook, originalFilename);
+  if (moduleKey !== 'employees' && !report.periodPolicy) {
+    report.periodPolicy = enforcePeriodPolicy({
+      mode: 'MULTI_CONFIRM',
+      sheets: report.summary?.sheets || [],
+      detectedPeriods: report.summary?.detectedPeriods || [],
+      confirmStep: options.confirmStep || 0
+    });
+  }
+  return report;
 };
 
 // Helper controller seragam untuk ?dryRun=true, pre-commit guard, dan kebijakan multi-bulan
 const runDryRunOrGuard = async (req, res, moduleKey) => {
   const isDryRun = String(req.query.dryRun || '').toLowerCase() === 'true';
   const confirmStep = Number(req.body?.confirmStep ?? req.query?.confirmStep ?? 0);
-  const validation = await validateImportFile(moduleKey, req.file.path, req.file.originalname);
-
-  // Modul selain employees (Demografi) memakai mode MULTI_CONFIRM (verifikasi 2 tahap jika beda bulan)
-  let periodPolicy = validation.periodPolicy || null;
-  if (moduleKey !== 'employees') {
-    periodPolicy = enforcePeriodPolicy({
-      mode: 'MULTI_CONFIRM',
-      sheets: validation.summary?.sheets || [],
-      detectedPeriods: validation.summary?.detectedPeriods || [],
-      confirmStep
-    });
-  }
+  const validation = await validateImportFile(moduleKey, req.file.path, req.file.originalname, { confirmStep });
+  const periodPolicy = validation.periodPolicy || null;
 
   if (isDryRun) {
     res.status(200).json({
