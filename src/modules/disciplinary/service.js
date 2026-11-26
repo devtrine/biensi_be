@@ -1,5 +1,5 @@
-const xlsx = require('xlsx');
 const repository = require('./repository');
+const { readWorkbookSafe, sheetToMatrix } = require('../../utils/excelReader');
 
 // Helper Tanggal Excel & Teks Bulan Indonesia ("Mei 2025", "januari 2022", "APRIL 2026")
 const parseFlexibleDate = (val) => {
@@ -91,8 +91,8 @@ const MONTH_MAP_INDO = {
 
 
 // === 1. SERVICE UNTUK IMPORT SP (HO & TOKO) ===
-const importBulkSP = async (filePath) => {
-  const workbook = xlsx.readFile(filePath);
+const importBulkSP = async (filePathOrWorkbook) => {
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
   let allData = [];
 
   // [FIX] Helper pembersih teks (konversi aman ke String & bersihkan non-breaking space \u00A0)
@@ -124,7 +124,7 @@ const importBulkSP = async (filePath) => {
   let hasSpRekapSheet = false;
 
   for (const sheetName of targetSheets) {
-    const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const rawMatrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (rawMatrix.length === 0) continue;
 
     // Lewati sheet Rekap SP Toko (TAHUN | BULAN | KATEGORI) saat memindai detail SP, dan tandai agar diimpor juga ke spAggregateMonthly
@@ -219,14 +219,14 @@ const importBulkSP = async (filePath) => {
   if (allData.length === 0) throw new Error('Gagal. Pastikan format SP (Toko/HO) benar.');
   const spResult = await repository.processBulkSP(allData);
   if (hasSpRekapSheet) {
-    await importSpTokoRekap(filePath).catch(() => null);
+    await importSpTokoRekap(workbook).catch(() => null);
   }
   return spResult;
 };
 
 // === 2. SERVICE UNTUK IMPORT FRAUD ===
-const importBulkFraud = async (filePath) => {
-  const workbook = xlsx.readFile(filePath);
+const importBulkFraud = async (filePathOrWorkbook) => {
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
   let allData = [];
 
   // Saring sheet untuk Fraud
@@ -249,7 +249,7 @@ const importBulkFraud = async (filePath) => {
   }
 
   for (const sheetName of targetSheets) {
-    const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const rawMatrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (rawMatrix.length === 0) continue;
 
     let col = {}; let dataStartRow = 0;
@@ -310,8 +310,8 @@ const importBulkFraud = async (filePath) => {
 };
 
 // === 3. SERVICE UNTUK IMPORT BIPARTIT (KASUS.XLSX) ===
-const importBulkBipartit = async (filePath) => {
-  const workbook = xlsx.readFile(filePath);
+const importBulkBipartit = async (filePathOrWorkbook) => {
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
   let allData = [];
 
   // Saring sheet untuk Bipartit / Mediasi
@@ -334,7 +334,7 @@ const importBulkBipartit = async (filePath) => {
   }
 
   for (const sheetName of targetSheets) {
-    const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const rawMatrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (rawMatrix.length === 0) continue;
 
     let col = {}; let dataStartRow = 0;
@@ -414,8 +414,8 @@ const importBulkBipartit = async (filePath) => {
 };
 
 // === 4. SERVICE UNTUK IMPORT & GET REKAP SP TOKO (SPTokoRekap.xlsx) ===
-const importSpTokoRekap = async (filePath) => {
-  const workbook = xlsx.readFile(filePath);
+const importSpTokoRekap = async (filePathOrWorkbook) => {
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
   let importedCount = 0;
 
   // Saring sheet untuk Rekap SP Toko
@@ -438,7 +438,7 @@ const importSpTokoRekap = async (filePath) => {
   }
 
   for (const sheetName of targetSheets) {
-    const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const rawMatrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (rawMatrix.length === 0) continue;
 
     let currentYear = null;

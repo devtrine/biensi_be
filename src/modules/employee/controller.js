@@ -56,7 +56,7 @@ const importEmployees = async (req, res) => {
     const guard = await runDryRunOrGuard(req, res, 'employees');
     if (guard.handled) return;
 
-    const result = await importService.processExcelImport(req.file.path, req.file.originalname);
+    const result = await importService.processExcelImport(guard.workbook || req.file.path, req.file.originalname);
     const mutationInfo = result.mutatedEmployeeCount > 0
       ? ` (${result.uniqueHeadcount} headcount aktif unik dari ${result.mutatedEmployeeCount} NIK mutasi)`
       : '';

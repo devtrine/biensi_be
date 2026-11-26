@@ -1,5 +1,5 @@
-const xlsx = require('xlsx');
 const repository = require('./repository');
+const { readWorkbookSafe, sheetToMatrix, sheetToObjects } = require('../../utils/excelReader');
 
 // Abuat baca Data Excel maupun String Tanggal ("26 Des 2025", "15 Jul 2026") biar bisa disimpan dengan Type data DateTime
 const excelDateToJSDate = (serial) => {
@@ -84,8 +84,8 @@ const resolveMovementType = (row, defaultReason) => {
 };
 
 // === MAIN BULK IMPORT LOGIC ===
-const importBulkMovement = async (filePath) => {
-  const workbook = xlsx.readFile(filePath);
+const importBulkMovement = async (filePathOrWorkbook) => {
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
   const allFormattedData = [];
 
   // Saring sheet agar hanya membaca sheet yang berhubungan dengan Turnover / PHK
@@ -108,7 +108,7 @@ const importBulkMovement = async (filePath) => {
   }
 
   for (const sheetName of targetSheets) {
-    const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const rawMatrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (rawMatrix.length === 0) continue;
 
     let headerRowIndex = 0;
@@ -150,7 +150,7 @@ const importBulkMovement = async (filePath) => {
     let rawExcelData = [];
 
     if (isNewTurnoverFormat) {
-      rawExcelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { range: headerRowIndex });
+      rawExcelData = sheetToObjects(workbook.Sheets[sheetName], headerRowIndex);
       const mappedData = rawExcelData.map(row => {
         const reason = String(
           getValue(row, 'kategoriphk') ||
@@ -239,7 +239,7 @@ const importBulkMovement = async (filePath) => {
       allFormattedData.push(...mappedData);
 
     } else if (isFormatHO) {
-      rawExcelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { range: headerRowIndex });
+      rawExcelData = sheetToObjects(workbook.Sheets[sheetName], headerRowIndex);
 
       const mappedData = rawExcelData.map(row => {
         const reason = String(getValue(row, 'kategoriphk') || getValue(row, 'alasankeluar') || getValue(row, 'alasan') || 'LAINNYA').trim().toUpperCase();

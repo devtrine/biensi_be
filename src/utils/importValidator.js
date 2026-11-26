@@ -1,5 +1,10 @@
-const xlsx = require('xlsx');
 const prisma = require('../config/database');
+const {
+  readWorkbookSafe,
+  peekSheetMatrix,
+  sheetToMatrix,
+  sheetToObjects
+} = require('./excelReader');
 const {
   IMPORT_MODULES,
   enforcePeriodPolicy,
@@ -176,12 +181,36 @@ const isoDateKey = (d) => {
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
 };
 
+const rowNormMapCache = new WeakMap();
+
+const getRowNormMap = (row) => {
+  let map = rowNormMapCache.get(row);
+  if (!map) {
+    map = new Map();
+    for (const k of Object.keys(row)) {
+      const nk = normKey(k);
+      const val = row[k];
+      const isNonEmpty = val !== undefined && val !== null && String(val).trim() !== '';
+      const existing = map.get(nk);
+      if (!existing) {
+        map.set(nk, isNonEmpty ? { hasNonEmpty: true, val } : { hasNonEmpty: false, val });
+      } else if (!existing.hasNonEmpty && isNonEmpty) {
+        existing.hasNonEmpty = true;
+        existing.val = val;
+      }
+    }
+    rowNormMapCache.set(row, map);
+  }
+  return map;
+};
+
 const getRowVal = (row, ...keys) => {
+  if (!row || typeof row !== 'object') return undefined;
+  const map = getRowNormMap(row);
   for (const targetKey of keys) {
-    const t = normKey(targetKey);
-    const match = Object.keys(row).find(k => normKey(k) === t);
-    if (match !== undefined && row[match] !== undefined && row[match] !== null && String(row[match]).trim() !== '') {
-      return row[match];
+    const entry = map.get(normKey(targetKey));
+    if (entry && entry.hasNonEmpty) {
+      return entry.val;
     }
   }
   return undefined;
@@ -384,7 +413,7 @@ const validateEmployees = async (workbook, fileName) => {
       if (['turnover', 'kehadiran', 'sales', 'fraud', 'kasus', 'phase', 'wlkp', 'critical', 'visual', 'panduan'].some(k => l.includes(k))) {
         return false;
       }
-      const preview = xlsx.utils.sheet_to_json(workbook.Sheets[name], { header: 1 }).slice(0, 6);
+      const preview = peekSheetMatrix(workbook.Sheets[name], 6);
       const flat = preview.flat().map(c => normKey(c)).join(' ');
       return flat.includes('employeeno') || flat.includes('namakaryawan') || flat.includes('nik');
     });
@@ -399,7 +428,7 @@ const validateEmployees = async (workbook, fileName) => {
 
   for (const sheetName of targetSheets) {
     const sheet = workbook.Sheets[sheetName];
-    const matrix = xlsx.utils.sheet_to_json(sheet, { header: 1 });
+    const matrix = sheetToMatrix(sheet);
     if (matrix.length === 0) continue;
 
     let headerRowIdx = -1;
@@ -445,9 +474,9 @@ const validateEmployees = async (workbook, fileName) => {
       month: sheetHint?.month || titleHint?.month || filePeriodHint?.month || (now.getMonth() + 1)
     };
 
-    const rows = xlsx.utils.sheet_to_json(sheet, { range: headerRowIdx });
+    const rows = sheetToObjects(sheet, headerRowIdx);
     rows.forEach((row, idx) => {
-      const rowNum = headerRowIdx + 2 + idx;
+      const rowNum = typeof row.__rowNum__ === 'number' ? row.__rowNum__ + 1 : headerRowIdx + 2 + idx;
       const rawEmpNo = getRowVal(row, 'employeeno', 'nik', 'idkaryawan');
       const rawName = getRowVal(row, 'namakaryawan', 'nama', 'name');
       const empNoClean = String(rawEmpNo || '').trim().replace(/^['"`\s]+/, '').toUpperCase();
@@ -756,7 +785,7 @@ const validateMovement = async (workbook, fileName) => {
   const parsedRows = [];
 
   for (const sheetName of targetSheets) {
-    const matrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const matrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (matrix.length === 0) continue;
 
     let headerRowIdx = -1;
@@ -789,9 +818,9 @@ const validateMovement = async (workbook, fileName) => {
       continue;
     }
 
-    const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { range: headerRowIdx });
+    const rows = sheetToObjects(workbook.Sheets[sheetName], headerRowIdx);
     rows.forEach((row, idx) => {
-      const rowNum = headerRowIdx + 2 + idx;
+      const rowNum = typeof row.__rowNum__ === 'number' ? row.__rowNum__ + 1 : headerRowIdx + 2 + idx;
       const rawName = getRowVal(row, 'namakaryawan', 'nama');
       const nameClean = cleanStr(rawName);
       if (!nameClean || /^\d+$/.test(nameClean) || nameClean.toUpperCase() === 'TOTAL') return;
@@ -970,7 +999,7 @@ const validateCompliance = async (workbook, fileName) => {
   const parsedRows = [];
 
   for (const sheetName of targetSheets) {
-    const matrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const matrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (matrix.length === 0) continue;
 
     let headerRow = -1;
@@ -1185,14 +1214,14 @@ const validateSp = async (workbook, fileName) => {
   let targetSheets = workbook.SheetNames.filter(n => {
     const l = n.toLowerCase();
     if (!((l.includes('sp') || l.includes('disiplin')) && !l.includes('demografi') && !l.includes('turnover'))) return false;
-    const mat = xlsx.utils.sheet_to_json(workbook.Sheets[n], { header: 1 });
+    const mat = peekSheetMatrix(workbook.Sheets[n], 10);
     return !isSpRekapSheetMatrix(mat);
   });
   if (targetSheets.length === 0) {
     targetSheets = workbook.SheetNames.filter(n => {
       const l = n.toLowerCase();
       if (['demografi', 'karyawan', 'pegawai', 'turnover', 'kehadiran', 'absensi', 'sales', 'fraud', 'kasus', 'phase', 'critical', 'visual', 'wlkp', 'panduan'].some(k => l.includes(k))) return false;
-      const mat = xlsx.utils.sheet_to_json(workbook.Sheets[n], { header: 1 });
+      const mat = peekSheetMatrix(workbook.Sheets[n], 10);
       return !isSpRekapSheetMatrix(mat);
     });
   }
@@ -1201,7 +1230,7 @@ const validateSp = async (workbook, fileName) => {
   const parsedRows = [];
 
   for (const sheetName of targetSheets) {
-    const matrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const matrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (matrix.length === 0) continue;
 
     const col = {};
@@ -1391,7 +1420,7 @@ const validateSpRekap = async (workbook, fileName) => {
   const parsedRows = [];
 
   for (const sheetName of targetSheets) {
-    const matrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const matrix = sheetToMatrix(workbook.Sheets[sheetName]);
     let currentYear = null;
     for (let r = 0; r < matrix.length; r++) {
       const row = matrix[r] || [];
@@ -1478,7 +1507,7 @@ const validateFraud = async (workbook, fileName) => {
   const parsedRows = [];
 
   for (const sheetName of targetSheets) {
-    const matrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const matrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (matrix.length === 0) continue;
 
     const col = {};
@@ -1629,7 +1658,7 @@ const validateBipartit = async (workbook, fileName) => {
   const parsedRows = [];
 
   for (const sheetName of targetSheets) {
-    const matrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const matrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (matrix.length === 0) continue;
 
     const col = {};
@@ -1766,7 +1795,7 @@ const validateAttendance = async (workbook, fileName) => {
   const parsedRows = [];
 
   for (const sheetName of targetSheets) {
-    const matrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const matrix = sheetToMatrix(workbook.Sheets[sheetName]);
     let currentScope = 'HQ';
     let currentHeaders = [];
     let foundHeader = false;
@@ -1898,7 +1927,7 @@ const validateSales = async (workbook, fileName) => {
   const parsedEntries = [];
 
   for (const sheetName of targetSheets) {
-    const matrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const matrix = sheetToMatrix(workbook.Sheets[sheetName]);
     let header1Index = -1;
     for (let i = 0; i < Math.min(10, matrix.length); i++) {
       if ((matrix[i] || []).some(c => typeof c === 'string' && c.replace(/\s+/g, '').toUpperCase().includes('NAMATOKO'))) {
@@ -2041,12 +2070,12 @@ const VALIDATORS = {
   sales: validateSales
 };
 
-const validateImportFile = async (moduleKey, filePath, originalFilename = '', options = {}) => {
+const validateImportFile = async (moduleKey, filePathOrWorkbook, originalFilename = '', options = {}) => {
   const fn = VALIDATORS[moduleKey];
   if (!fn) {
     throw new Error(`Modul validasi '${moduleKey}' tidak dikenali.`);
   }
-  const workbook = xlsx.readFile(filePath);
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
   if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
     return buildReport({
       moduleKey,
@@ -2125,7 +2154,8 @@ const runDryRunOrGuard = async (req, res, moduleKey) => {
   const isDryRun = String(req.query.dryRun || '').toLowerCase() === 'true';
   const confirmStep = Number(req.body?.confirmStep ?? req.query?.confirmStep ?? 0);
   const allowReimport = isTruthyFlag(req.body?.allowReimport) || isTruthyFlag(req.query?.allowReimport);
-  const validation = await validateImportFile(moduleKey, req.file.path, req.file.originalname, { confirmStep });
+  const workbook = readWorkbookSafe(req.file.path);
+  const validation = await validateImportFile(moduleKey, workbook, req.file.originalname, { confirmStep });
   const periodPolicy = validation.periodPolicy || null;
 
   if (isDryRun) {
@@ -2182,7 +2212,7 @@ const runDryRunOrGuard = async (req, res, moduleKey) => {
     return { handled: true, validation, periodPolicy };
   }
 
-  return { handled: false, validation, periodPolicy };
+  return { handled: false, validation, periodPolicy, workbook };
 };
 
 module.exports = {

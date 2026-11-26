@@ -21,7 +21,7 @@ const importBulkSP = async (req, res) => {
     const guard = await runDryRunOrGuard(req, res, 'sp');
     if (guard.handled) return;
 
-    const result = await service.importBulkSP(req.file.path);
+    const result = await service.importBulkSP(guard.workbook || req.file.path);
     const totalRows = guard.validation?.summary?.totalRows || (result.successCount + result.failCount);
 
     await logImportBatch({
@@ -63,7 +63,7 @@ const importBulkFraud = async (req, res) => {
     const guard = await runDryRunOrGuard(req, res, 'fraud');
     if (guard.handled) return;
 
-    const result = await service.importBulkFraud(req.file.path);
+    const result = await service.importBulkFraud(guard.workbook || req.file.path);
     const totalRows = guard.validation?.summary?.totalRows || (result.successCount + result.failCount);
 
     await logImportBatch({
@@ -105,7 +105,7 @@ const importBulkBipartit = async (req, res) => {
     const guard = await runDryRunOrGuard(req, res, 'bipartit');
     if (guard.handled) return;
 
-    const result = await service.importBulkBipartit(req.file.path);
+    const result = await service.importBulkBipartit(guard.workbook || req.file.path);
     const totalRows = guard.validation?.summary?.totalRows || (result.successCount + result.failCount);
 
     await logImportBatch({
@@ -147,7 +147,7 @@ const importSpTokoRekap = async (req, res) => {
     const guard = await runDryRunOrGuard(req, res, 'sp-rekap');
     if (guard.handled) return;
 
-    const result = await service.importSpTokoRekap(req.file.path);
+    const result = await service.importSpTokoRekap(guard.workbook || req.file.path);
     const totalRows = guard.validation?.summary?.totalRows || result.imported || 0;
 
     await logImportBatch({

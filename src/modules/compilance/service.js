@@ -1,5 +1,5 @@
-const xlsx = require('xlsx');
 const repository = require('./repository');
+const { readWorkbookSafe, sheetToMatrix } = require('../../utils/excelReader');
 
 // Parser tanggal tangguh: mendukung Excel Serial Number, YYYY-MM-DD, dan "04-Oct-26" / "04-Okt-26"
 const parseExcelDate = (val) => {
@@ -56,8 +56,8 @@ const matchHeaderField = (normCell) => {
   return null;
 };
 
-const importComplianceData = async (filePath) => {
-  const workbook = xlsx.readFile(filePath);
+const importComplianceData = async (filePathOrWorkbook) => {
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
   const allData = [];
 
   // Filter sheet perizinan/kepatuhan
@@ -77,7 +77,7 @@ const importComplianceData = async (filePath) => {
   if (targetSheets.length === 0) targetSheets = [workbook.SheetNames[0]];
 
   for (const sheetName of targetSheets) {
-    const rawMatrix = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const rawMatrix = sheetToMatrix(workbook.Sheets[sheetName]);
     if (rawMatrix.length === 0) continue;
 
     let listHeaderRow = -1;

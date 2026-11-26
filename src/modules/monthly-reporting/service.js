@@ -1,6 +1,6 @@
 const repository = require('./repository');
-const xlsx = require('xlsx');
-const prisma = require('../../config/database')
+const prisma = require('../../config/database');
+const { readWorkbookSafe, sheetToMatrix } = require('../../utils/excelReader');
 
 // Hitung usia/masa kerja ke format Desimal
 const calculateYears = (startDate) => {
@@ -647,8 +647,8 @@ const importAttendanceUniversal = async (raw2DArray) => {
   return { imported: successCount };
 };
 
-const importSalesUniversal = async (filePath) => {
-  const workbook = xlsx.readFile(filePath);
+const importSalesUniversal = async (filePathOrWorkbook) => {
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
   
   // Cari sheet sales
   let targetSheets = workbook.SheetNames.filter(name => {
@@ -672,7 +672,7 @@ const importSalesUniversal = async (filePath) => {
   let totalFormattedData = [];
 
   for (const sheetName of targetSheets) {
-    const raw2DArray = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    const raw2DArray = sheetToMatrix(workbook.Sheets[sheetName]);
     let header1Index = -1;
     for (let i = 0; i < raw2DArray.length; i++) {
       if ((raw2DArray[i] || []).some(cell => typeof cell === 'string' && cell.replace(/\s+/g, '').toUpperCase().includes('NAMATOKO'))) {

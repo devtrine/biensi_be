@@ -1,7 +1,12 @@
-const xlsx = require('xlsx');
 const repository = require('./repository');
 const prisma = require('../../config/database');
 const { IMPORT_MODULES, logImportBatch, MONTH_NAMES } = require('../../utils/importBatch');
+const {
+  readWorkbookSafe,
+  peekSheetMatrix,
+  sheetToMatrix,
+  sheetToObjects
+} = require('../../utils/excelReader');
 
 const INDO_MONTH_TO_EN = {
   januari: 'January', jan: 'Jan',
@@ -69,15 +74,25 @@ const excelDateToJSDate = (serial) => {
   return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 12, 0, 0));
 };
 
-// Menghapus semua spasi, simbol, & enter dari nama kolom Excel
+// Menghapus semua spasi, simbol, & enter dari nama kolom Excel (dengan cache WeakMap O(1))
+const rowValueCache = new WeakMap();
+
 const getValue = (row, targetKey) => {
+  if (!row || typeof row !== 'object') return undefined;
+  let map = rowValueCache.get(row);
+  if (!map) {
+    map = new Map();
+    for (const key of Object.keys(row)) {
+      if (!key) continue;
+      const nk = key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      if (!map.has(nk)) {
+        map.set(nk, row[key]);
+      }
+    }
+    rowValueCache.set(row, map);
+  }
   const target = targetKey.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-
-  const exactKey = Object.keys(row).find(
-    key => key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === target
-  );
-
-  return exactKey ? row[exactKey] : undefined;
+  return map.get(target);
 };
 
 const MONTH_MAP = {
@@ -232,9 +247,9 @@ const parseMonthYearValue = (rawMonth, rawYear, fallback) => {
   };
 };
 
-const processExcelImport = async (filePath, originalFilename = '') => {
+const processExcelImport = async (filePathOrWorkbook, originalFilename = '') => {
   const startedAt = new Date();
-  const workbook = xlsx.readFile(filePath);
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
 
   // 1. Identifikasi sheet yang berisi data karyawan (HO & Toko)
   let targetSheets = workbook.SheetNames.filter(name => {
@@ -251,7 +266,7 @@ const processExcelImport = async (filePath, originalFilename = '') => {
           lower.includes('wlkp') || lower.includes('critical') || lower.includes('visual') || lower.includes('panduan')) {
         return false;
       }
-      const previewRows = xlsx.utils.sheet_to_json(workbook.Sheets[name], { header: 1 }).slice(0, 5);
+      const previewRows = peekSheetMatrix(workbook.Sheets[name], 5);
       const headerStr = previewRows.flat().map(c => String(c || '').toUpperCase().replace(/\s+/g, '')).join(' ');
       return headerStr.includes('EMPLOYEENO') || headerStr.includes('NAMAKARYAWAN') || headerStr.includes('NIK');
     });
@@ -265,7 +280,7 @@ const processExcelImport = async (filePath, originalFilename = '') => {
 
   for (const sheetName of targetSheets) {
     const sheet = workbook.Sheets[sheetName];
-    const matrix = xlsx.utils.sheet_to_json(sheet, { header: 1 });
+    const matrix = sheetToMatrix(sheet);
 
     // Cari di baris ke-berapa header tabel berada (antisipasi jika ada judul Periode di baris 1-3)
     let headerRowIdx = 0;
@@ -288,12 +303,12 @@ const processExcelImport = async (filePath, originalFilename = '') => {
       month: detectedFromSheet?.month || detectedFromTitle?.month || detectedFromFile?.month || (now.getMonth() + 1)
     };
 
-    const sheetData = xlsx.utils.sheet_to_json(sheet, { range: headerRowIdx });
+    const sheetData = sheetToObjects(sheet, headerRowIdx);
     sheetData.forEach((row, idx) => {
       rawExcelData.push({
         ...row,
         _sheetName: sheetName,
-        _excelRowNumber: headerRowIdx + 2 + idx,
+        _excelRowNumber: typeof row.__rowNum__ === 'number' ? row.__rowNum__ + 1 : headerRowIdx + 2 + idx,
         _sheetFallbackPeriod: sheetFallbackPeriod
       });
     });

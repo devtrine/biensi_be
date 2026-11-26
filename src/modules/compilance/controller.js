@@ -13,7 +13,7 @@ const importCompliance = async (req, res) => {
     const guard = await runDryRunOrGuard(req, res, 'compliance');
     if (guard.handled) return;
 
-    const result = await service.importComplianceData(req.file.path);
+    const result = await service.importComplianceData(guard.workbook || req.file.path);
 
     const totalRows = guard.validation?.summary?.totalRows || (result.successCount + result.failCount);
     await logImportBatch({

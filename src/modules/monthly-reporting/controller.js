@@ -1,16 +1,16 @@
 const fs = require('fs');
-const xlsx = require('xlsx');
 const { success } = require('zod');
 const service = require('./service');
 const repository = require('./repository');
 const { getAttendanceAggregate } = require('./repository');
 const { runDryRunOrGuard } = require('../../utils/importValidator');
 const { IMPORT_MODULES, logImportBatch } = require('../../utils/importBatch');
+const { readWorkbookSafe, sheetToMatrix } = require('../../utils/excelReader');
 
-const parseExcel = (filePath) => {
-  const workbook = xlsx.readFile(filePath);
+const parseExcel = (filePathOrWorkbook) => {
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
   const sheetName = workbook.SheetNames[0];
-  const rawSheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+  const rawSheet = sheetToMatrix(workbook.Sheets[sheetName]);
 
   let headerRowIndex = -1;
   for (let i = 0; i < rawSheet.length; i++) {
@@ -39,10 +39,10 @@ const parseExcel = (filePath) => {
   return cleanData;
 };
 
-const parseExcel2D = (filePath) => {
-  const workbook = xlsx.readFile(filePath);
+const parseExcel2D = (filePathOrWorkbook) => {
+  const workbook = readWorkbookSafe(filePathOrWorkbook);
   const sheetName = workbook.SheetNames[0];
-  return xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+  return sheetToMatrix(workbook.Sheets[sheetName]);
 };
 
 const createPeriod = async (req, res) => {
@@ -207,7 +207,7 @@ const uploadAttendanceUniversal = async (req, res) => {
     const guard = await runDryRunOrGuard(req, res, 'attendance');
     if (guard.handled) return;
 
-    const workbook = xlsx.readFile(req.file.path);
+    const workbook = readWorkbookSafe(guard.workbook || req.file.path);
 
     let targetSheets = workbook.SheetNames.filter(name => {
       const lower = name.toLowerCase();
@@ -231,7 +231,7 @@ const uploadAttendanceUniversal = async (req, res) => {
     const errorList = [];
     for (const sheetName of targetSheets) {
       try {
-        const raw2DArray = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+        const raw2DArray = sheetToMatrix(workbook.Sheets[sheetName]);
         const data = await service.importAttendanceUniversal(raw2DArray);
         totalImported += (data.imported || 0);
       } catch (sheetErr) {
@@ -285,7 +285,7 @@ const uploadSalesUniversal = async (req, res) => {
     const guard = await runDryRunOrGuard(req, res, 'sales');
     if (guard.handled) return;
 
-    const data = await service.importSalesUniversal(req.file.path);
+    const data = await service.importSalesUniversal(guard.workbook || req.file.path);
     const totalRows = guard.validation?.summary?.totalRows || data.imported || 0;
 
     await logImportBatch({

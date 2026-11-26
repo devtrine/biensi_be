@@ -53,7 +53,7 @@ const uploadBulkMovement = async (req, res) => {
     const guard = await runDryRunOrGuard(req, res, 'movement');
     if (guard.handled) return;
 
-    const result = await service.importBulkMovement(req.file.path);
+    const result = await service.importBulkMovement(guard.workbook || req.file.path);
     if (!result) throw new Error('Gagal memproses data, respons kosong dari server.');
 
     const totalRows = guard.validation?.summary?.totalRows || (result.sukses + result.gagal);
