@@ -285,8 +285,11 @@ const processBulkImport = async (rawData) => {
       let validBirthDate = row.birthDate ? new Date(row.birthDate) : null;
       if (validBirthDate && isNaN(validBirthDate.getTime())) validBirthDate = null;
 
-      let validJoinDate = row.joinDate ? new Date(row.joinDate) : new Date();
-      if (validJoinDate && isNaN(validJoinDate.getTime())) validJoinDate = new Date();
+      const parsedJoinDate = row.joinDate ? new Date(row.joinDate) : null;
+      const hasExplicitJoinDate = Boolean(parsedJoinDate && !isNaN(parsedJoinDate.getTime()));
+      const validJoinDate = hasExplicitJoinDate
+        ? parsedJoinDate
+        : (existingEmp?.joinDate || new Date());
 
       const normalizedGender = normalizeGender(row.gender);
       const normalizedEducation = normalizeText(row.educationLevel);
@@ -311,10 +314,12 @@ const processBulkImport = async (rawData) => {
 
       const updatePayload = {
         ...basePayload,
-        // Jangan timpa gender/tanggal lahir/pendidikan menjadi null jika baris periode lain tidak mengisinya
+        // Jangan timpa gender/tanggal lahir/pendidikan/tgl masuk/gaji menjadi null atau hari ini jika baris tidak mengisinya
         ...(normalizedGender ? {} : { gender: undefined }),
         ...(validBirthDate ? {} : { birthDate: undefined }),
-        ...(normalizedEducation ? {} : { educationLevel: undefined })
+        ...(normalizedEducation ? {} : { educationLevel: undefined }),
+        ...(hasExplicitJoinDate ? {} : { joinDate: undefined }),
+        ...(parsedSalary !== null ? {} : { baseSalary: undefined })
       };
 
       // 6. Eksekusi Upsert (Pastikan relasi bisa di-disconnect jika karyawan HO tidak punya storeId)
@@ -348,10 +353,10 @@ const processBulkImport = async (rawData) => {
         storeId,
         employeeLevel: levelName,
         employmentType: empType,
-        birthDate: validBirthDate,
-        joinDate: validJoinDate,
+        birthDate: validBirthDate ?? savedEmp.birthDate ?? null,
+        joinDate: hasExplicitJoinDate ? validJoinDate : (savedEmp.joinDate ?? validJoinDate),
         endDate: validEndDate,
-        baseSalary: parsedSalary,
+        baseSalary: parsedSalary ?? (savedEmp.baseSalary !== null && savedEmp.baseSalary !== undefined ? Number(savedEmp.baseSalary) : null),
         bpjsKetenagakerjaan: Boolean(row.bpjsKetenagakerjaan),
         bpjsKesehatan: Boolean(row.bpjsKesehatan)
       };
