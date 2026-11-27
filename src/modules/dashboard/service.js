@@ -549,7 +549,12 @@ const getDashboardSummary = async (periodOrId, scope = 'Corporate') => {
     repository.getSalesByPeriod(periodId, period.year)
   ]);
 
-  const totalSales = sales.reduce((sum, s) => sum + parseFloat(s.netSales || 0), 0);
+  // [SYNC] Kecualikan baris TOTAL & STORE SUDIRMAN agar sama persis dengan getStorePerformanceDashboard
+  const totalSales = sales.reduce((sum, s) => {
+    const cleanName = String(s.store?.storeName || '').toUpperCase().trim();
+    if (cleanName === 'TOTAL' || cleanName === 'STORE SUDIRMAN') return sum;
+    return sum + parseFloat(s.netSales || 0);
+  }, 0);
 
   // Filter Snapshot sesuai Scope untuk Charts (gunakan storeId snapshot agar data historis tidak bergeser karena mutasi periode lain)
   const normScope = String(scope || 'CORPORATE').toUpperCase();
@@ -691,6 +696,7 @@ const getDashboardSummary = async (periodOrId, scope = 'Corporate') => {
 
   const avgAge = validAgeCount ? (totalAge / validAgeCount).toFixed(1) : 0;
 
+  // Rasio Supply Chain / Total Employee (Target: 0.05 atau 1 : 20)
   const productionEmployees = snapshots.filter(s => {
     const divName = String(s.division?.name || s.employee?.division?.name || '').toUpperCase().trim();
     const deptName = String(s.department?.name || s.employee?.department?.name || '').toUpperCase().trim();
@@ -701,7 +707,6 @@ const getDashboardSummary = async (periodOrId, scope = 'Corporate') => {
   const prodHeadcount = productionEmployees.length;
   const totalHeadcount = snapshots.length;
 
-  // Metrik Production / Total Employee (Target: 0.05 atau 1 : 20)
   const prodRatioDecimal = totalHeadcount > 0
     ? Number((prodHeadcount / totalHeadcount).toFixed(2))
     : 0;
@@ -754,7 +759,7 @@ const getDashboardSummary = async (periodOrId, scope = 'Corporate') => {
       distribution
     },
     attendance: attendance || null,
-    attendanceByScope, // membedakan HQ dan Store
+    attendanceByScope,
     productivity: {
       totalBudgetCost: totalBudget,
       totalActualCost: totalActual,
@@ -790,23 +795,39 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
     repository.getSalesByPeriod(periodId, year),
     repository.getMonthlySnapshots(periodId, year)
   ]);
-  const storeSnapshots = periodSnapshots.filter(s => s.storeId !== null);
-  let employees = [];
-  if (storeSnapshots.length > 0) {
-    employees = storeSnapshots.map(s => ({
-      ...(s.employee || {}),
-      storeId: s.storeId,
-      store: s.store || s.employee?.store || null,
-      position: s.position || s.employee?.position || null,
-      division: s.division || s.employee?.division || null,
-      department: s.department || s.employee?.department || null,
-      baseSalary: s.actualLabourCost || s.budgetLabourCost || s.employee?.baseSalary || 0,
-      ageYears: s.ageYears,
-      tenureYears: s.tenureYears
-    }));
+
+  // 1. Normalisasi seluruh karyawan aktif (HO + Toko) dengan aturan salary yang identik dengan getDashboardSummary
+  const validSnapshots = periodSnapshots.filter(s => s.employee);
+  let allEmployees = [];
+  if (validSnapshots.length > 0) {
+    allEmployees = validSnapshots.map(s => {
+      const budget = parseFloat(s.budgetLabourCost || s.employee?.baseSalary || 0);
+      let actual = parseFloat(s.actualLabourCost || 0);
+      if (actual === 0) actual = budget;
+
+      return {
+        ...(s.employee || {}),
+        storeId: s.storeId ?? null,
+        store: s.store || s.employee?.store || null,
+        position: s.position || s.employee?.position || null,
+        division: s.division || s.employee?.division || null,
+        department: s.department || s.employee?.department || null,
+        baseSalary: actual,
+        ageYears: s.ageYears,
+        tenureYears: s.tenureYears
+      };
+    });
   } else {
-    employees = await repository.getActiveEmployeesForSnapshot();
+    const fallbackActive = await repository.getActiveEmployeesForSnapshot();
+    allEmployees = fallbackActive.map(emp => ({
+      ...emp,
+      storeId: emp.storeId ?? null,
+      baseSalary: parseFloat(emp.baseSalary || 0)
+    }));
   }
+
+  // Pisahkan karyawan khusus toko untuk metrik per-toko, regional, & tipe toko
+  const storeEmployees = allEmployees.filter(emp => emp.storeId !== null);
 
   const today = new Date();
   let totalNetSales = 0;
@@ -850,7 +871,13 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
     return years > 0 ? years : null;
   };
 
-  employees.forEach(emp => {
+  // 2. Total Labour Cost seluruh karyawan aktif (HO + Toko)
+  const totalAllLabourCost = allEmployees.reduce((sum, emp) => {
+    return sum + parseFloat(emp.baseSalary || 0);
+  }, 0);
+
+  // 3. Agregasi statistik karyawan khusus toko
+  storeEmployees.forEach(emp => {
     const storeName = emp.store?.storeName || '';
     const region = inferRegion(storeName, emp.store?.region);
     const age = (emp.ageYears !== undefined && emp.ageYears !== null) ? Number(emp.ageYears) : calculateYears(emp.birthDate);
@@ -863,7 +890,7 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
       storeEmployeeMap[storeId] = { managers: 0, staffs: 0, managerTenure: 0, totalSalary: 0 };
     }
 
-    storeEmployeeMap[storeId].totalSalary += (realSalary > 0 ? realSalary : 5000000);
+    storeEmployeeMap[storeId].totalSalary += realSalary;
 
     if (posName.includes('MANAGER') || posName.includes('LEADER')) {
       storeEmployeeMap[storeId].managers++;
@@ -893,6 +920,7 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
     }
   });
 
+  // 4. Agregasi data penjualan per toko
   salesData.forEach((sale, idx) => {
     const storeName = sale.store?.storeName || '';
     const cleanName = storeName.toUpperCase().trim();
@@ -955,6 +983,7 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
 
   const mgrAvg = managerCount > 0 ? (managerTenureSum / managerCount) : 0;
   const frontAvg = frontlineCount > 0 ? (frontlineTenureSum / frontlineCount) : 0;
+  const allEmployeesCount = allEmployees.length;
 
   return {
     success: true,
@@ -962,14 +991,20 @@ const getStorePerformanceDashboard = async (periodId, year = null) => {
       overview: {
         totalSales: totalNetSales,
         targetAchievement: totalTargetSales > 0 ? ((totalNetSales / totalTargetSales) * 100).toFixed(1) + '%' : '0%',
-        retailAssociates: employees.length,
-        revenuePerFte: employees.length > 0 ? Math.round(totalNetSales / employees.length) : 0
+        retailAssociates: storeEmployees.length,
+        totalEmployees: allEmployeesCount,
+        // Revisi 1: Total Sales / Total Headcount (All Karyawan HO + Toko)
+        revenuePerFte: allEmployeesCount > 0 ? Math.round(totalNetSales / allEmployeesCount) : 0,
+        // Revisi 2: Total Sales / Total Labour Cost (All Karyawan HO + Toko)
+        totalLabourCost: totalAllLabourCost,
+        salesToLabourCostRatio: totalAllLabourCost > 0 ? Number((totalNetSales / totalAllLabourCost).toFixed(2)) : 0,
+        // Rasio persentase LC / Sales keseluruhan
+        labourCostRatio: totalNetSales > 0 ? ((totalAllLabourCost / totalNetSales) * 100).toFixed(2) + '%' : '0.00%'
       },
       regionalComparison: {
         BARAT: formatRegion(regionalData.BARAT),
         TIMUR: formatRegion(regionalData.TIMUR)
       },
-      // Komposisi labour cost per store vs sales
       costRatioByStoreType: {
         familyStore: storeTypeAcc['FAMILY STORE'].sales > 0
           ? ((storeTypeAcc['FAMILY STORE'].cost / storeTypeAcc['FAMILY STORE'].sales) * 100).toFixed(2) + '%' : '0.00%',
