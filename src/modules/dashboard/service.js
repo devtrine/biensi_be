@@ -541,12 +541,13 @@ const getDashboardSummary = async (periodOrId, scope = 'Corporate') => {
   });
 
   const periodId = period.id || null;
-  const [rawSnapshots, prevDecRawSnapshots, attendance, attendanceByScope, sales] = await Promise.all([
+  const [rawSnapshots, prevDecRawSnapshots, attendance, attendanceByScope, sales, productionRecord] = await Promise.all([
     repository.getMonthlySnapshots(periodId, period.year),
     prevDecPeriod ? repository.getMonthlySnapshots(prevDecPeriod.id, period.year - 1) : Promise.resolve([]),
     repository.getAttendanceByPeriod(periodId, scope, period.year),
     repository.getAttendanceBothScopes(periodId, period.year),
-    repository.getSalesByPeriod(periodId, period.year)
+    repository.getSalesByPeriod(periodId, period.year),
+    repository.getProductionByPeriod(periodId, period.year, period.month)
   ]);
 
   // [SYNC] Kecualikan baris TOTAL & STORE SUDIRMAN agar sama persis dengan getStorePerformanceDashboard
@@ -714,6 +715,7 @@ const getDashboardSummary = async (periodOrId, scope = 'Corporate') => {
     ? Math.round(totalHeadcount / prodHeadcount)
     : 0;
   const prodTarget = 0.05;
+  const actualProductionQty = productionRecord ? parseFloat(productionRecord.productionQty || 0) : 0;
 
   const formatCostAgg = (aggObj) => {
     return Object.keys(aggObj).map(key => {
@@ -775,7 +777,10 @@ const getDashboardSummary = async (periodOrId, scope = 'Corporate') => {
         ratioText: prodHeadcount > 0 ? `Ratio 1 : ${prodRatioDenominator}` : 'Ratio 0 : 0',
         ratioDecimal: prodRatioDecimal,
         targetDecimal: prodTarget,
-        isTargetAchieved: prodHeadcount > 0 && prodRatioDecimal <= prodTarget
+        isTargetAchieved: prodHeadcount > 0 && prodRatioDecimal <= prodTarget,
+        productionQty: actualProductionQty,
+        outputPerProductionEmployee: prodHeadcount > 0 ? Math.round(actualProductionQty / prodHeadcount) : 0,
+        outputPerTotalEmployee: totalHeadcount > 0 ? Math.round(actualProductionQty / totalHeadcount) : 0
       },
 
       costByDivision: formatCostAgg(costDistribution.byDivision),

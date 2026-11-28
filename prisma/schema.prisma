@@ -232,6 +232,7 @@ model ReportingPeriod {
 
   employeeSnaps       EmployeeMonthlySnapshot[]
   salesMonthly        SalesMonthly[]
+  productionMonthly   ProductionMonthly?
   kpiPositions        KpiPosition[]
   attendanceAggregate AttendanceAggregateMonthly[]
   spAggregateMonthly  SpAggregateMonthly[]
@@ -306,6 +307,19 @@ model SalesMonthly {
 
   @@unique([periodId, storeId])
   @@map("sales_monthly")
+}
+
+model ProductionMonthly {
+  id            String   @id @default(uuid()) @db.Uuid
+  periodId      String   @unique @map("period_id") @db.Uuid
+  productionQty Decimal  @default(0) @map("production_qty") @db.Decimal(18, 2)
+  notes         String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  period ReportingPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@map("production_monthly")
 }
 
 // RECRUITMENT & KPI Stats

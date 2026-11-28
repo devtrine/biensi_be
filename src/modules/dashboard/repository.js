@@ -148,6 +148,30 @@ const getSalesByPeriod = async (periodId, year = null) => {
   return validSales;
 };
 
+// Ambil Realisasi Jumlah Produksi per Periode
+const getProductionByPeriod = async (periodId, year = null, month = null) => {
+  if (periodId) {
+    const exact = await prisma.productionMonthly.findUnique({
+      where: { periodId }
+    });
+    if (exact) return exact;
+  }
+
+  if (year && month) {
+    const byYm = await prisma.productionMonthly.findFirst({
+      where: {
+        period: {
+          year: parseInt(year, 10),
+          month: parseInt(month, 10)
+        }
+      }
+    });
+    if (byYm) return byYm;
+  }
+
+  return null;
+};
+
 // Ambil Karyawan Toko
 const getActiveEmployeesForSnapshot = async () => {
   return await prisma.employee.findMany({
@@ -626,6 +650,7 @@ module.exports = {
   getAttendanceByPeriod,
   getAttendanceBothScopes,
   getSalesByPeriod,
+  getProductionByPeriod,
   getActiveEmployeesForSnapshot,
   getTurnoverMovements,
   getExpiringContracts,

@@ -21,7 +21,8 @@ const VALIDATOR_TO_BATCH_MODULES = {
   fraud: [IMPORT_MODULES.FRAUD],
   bipartit: [IMPORT_MODULES.BIPARTIT],
   attendance: [IMPORT_MODULES.ATTENDANCE],
-  sales: [IMPORT_MODULES.SALES]
+  sales: [IMPORT_MODULES.SALES],
+  production: [IMPORT_MODULES.PRODUCTION]
 };
 
 const MONTH_MAP = {
@@ -2058,6 +2059,92 @@ const validateSales = async (workbook, fileName) => {
   });
 };
 
+// =========================
+// 10. VALIDATOR: PRODUCTION
+// =========================
+const validateProduction = async (workbook, fileName) => {
+  const { parseProductionWorkbook } = require('../modules/production/service');
+  const parsed = parseProductionWorkbook(workbook);
+
+  const headerErrors = [...parsed.headerErrors];
+  const rowErrors = [...parsed.rowErrors];
+  const fileDuplicates = [];
+  const dbDuplicates = [];
+  const detectedPeriods = new Set();
+
+  // Berikan petunjuk typo nama kolom jika header wajib tidak ditemukan
+  if (headerErrors.length > 0 && parsed.targetSheets.length > 0) {
+    const firstSheet = workbook.Sheets[parsed.targetSheets[0]];
+    const sample = peekSheetMatrix(firstSheet, 5).flat().filter(Boolean);
+    const hint = findHeaderTypoHint(sample, ['bulan', 'tahun', 'jumlahproduksi']);
+    if (hint) {
+      headerErrors[0] = `${headerErrors[0]} (kemungkinan typo pada kolom "${hint}")`;
+    }
+  }
+
+  const seenInFile = new Map();
+  for (const r of parsed.parsedRows) {
+    detectedPeriods.add(r.periodKey);
+    if (seenInFile.has(r.periodKey)) {
+      fileDuplicates.push(
+        `${r.label} (${r.monthName} ${r.year}): Periode duplikat di dalam file dengan ${seenInFile.get(r.periodKey).label}.`
+      );
+    } else {
+      seenInFile.set(r.periodKey, r);
+    }
+  }
+
+  if (parsed.parsedRows.length > 0) {
+    const existing = await prisma.productionMonthly.findMany({
+      include: { period: { select: { year: true, month: true } } }
+    });
+    const dbMap = new Map(
+      existing
+        .filter(item => item.period)
+        .map(item => [`${item.period.year}-${String(item.period.month).padStart(2, '0')}`, item])
+    );
+
+    const matchedDbMsgs = [];
+    for (const r of parsed.parsedRows) {
+      const ex = dbMap.get(r.periodKey);
+      if (ex && Math.round(Number(ex.productionQty || 0)) === Math.round(Number(r.productionQty || 0))) {
+        matchedDbMsgs.push(
+          `${r.label} (${r.monthName} ${r.year}): Data produksi periode ini sudah tercatat sama persis di database.`
+        );
+      }
+    }
+    if (matchedDbMsgs.length === parsed.parsedRows.length) {
+      dbDuplicates.push(...matchedDbMsgs);
+    }
+  }
+
+  const report = buildReport({
+    moduleKey: 'production',
+    fileName,
+    sheets: parsed.targetSheets,
+    detectedPeriods,
+    totalRows: parsed.parsedRows.length + rowErrors.length,
+    headerErrors,
+    rowErrors,
+    fileDuplicates,
+    dbDuplicates
+  });
+
+  // Template Produksi memang dirancang untuk input banyak bulan / lintas tahun sekaligus
+  // sehingga tidak memblokir dengan konfirmasi 2 tahap selama baris data valid.
+  const periods = summarizeDetectedPeriods(detectedPeriods, parsed.parsedRows);
+  report.periodPolicy = {
+    allowed: true,
+    httpStatus: 200,
+    requiresConfirmation: false,
+    isMultiMonth: periods.length > 1,
+    primaryPeriod: periods[0] || null,
+    periods
+  };
+
+  return report;
+};
+
 const VALIDATORS = {
   employees: validateEmployees,
   movement: validateMovement,
@@ -2067,7 +2154,8 @@ const VALIDATORS = {
   fraud: validateFraud,
   bipartit: validateBipartit,
   attendance: validateAttendance,
-  sales: validateSales
+  sales: validateSales,
+  production: validateProduction
 };
 
 const validateImportFile = async (moduleKey, filePathOrWorkbook, originalFilename = '', options = {}) => {

@@ -17,7 +17,8 @@ const IMPORT_MODULES = {
   FRAUD: 'FRAUD',
   BIPARTIT: 'BIPARTIT',
   ATTENDANCE: 'ATTENDANCE',
-  SALES: 'SALES'
+  SALES: 'SALES',
+  PRODUCTION: 'PRODUCTION'
 };
 
 /**
@@ -332,7 +333,12 @@ const getImportStatusByYear = async ({ module, year }) => {
         if (p) legacyByMonth[p.month] = { periodId: p.id, count: g._count.id };
       });
     }
-  } else if (module === IMPORT_MODULES.ATTENDANCE || module === IMPORT_MODULES.SALES || module === IMPORT_MODULES.SP_REKAP) {
+  } else if (
+    module === IMPORT_MODULES.ATTENDANCE ||
+    module === IMPORT_MODULES.SALES ||
+    module === IMPORT_MODULES.SP_REKAP ||
+    module === IMPORT_MODULES.PRODUCTION
+  ) {
     const periodsInYear = await prisma.reportingPeriod.findMany({
       where: { year: numYear },
       select: { id: true, month: true }
@@ -342,7 +348,9 @@ const getImportStatusByYear = async ({ module, year }) => {
         ? prisma.attendanceAggregateMonthly
         : module === IMPORT_MODULES.SALES
           ? prisma.salesMonthly
-          : prisma.spAggregateMonthly;
+          : module === IMPORT_MODULES.PRODUCTION
+            ? prisma.productionMonthly
+            : prisma.spAggregateMonthly;
       const grouped = await model.groupBy({
         by: ['periodId'],
         where: { periodId: { in: periodsInYear.map(p => p.id) } },
